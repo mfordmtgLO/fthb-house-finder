@@ -138,9 +138,9 @@ app.post('/api/auth/session', async (req: Request, res: Response): Promise<void>
   });
 });
 
-// 2. Curated Listings Endpoint (Fail-closed 401 without key or active session)
+// 2. Curated Listings Endpoint (Publicly browsable catalog for buyers & map)
 // ARCHITECTURE LAW: Serves verbatim curated listings from Firestore.
-app.get('/api/listings', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/listings', async (req: Request, res: Response): Promise<void> => {
   const { city, maxPrice, maxMonthlyPayment, program, listingId, favorites } = req.query;
 
   const parsedMaxPrice = maxPrice ? parseFloat(maxPrice as string) : undefined;
@@ -167,7 +167,7 @@ app.get('/api/listings', authenticateRequest, async (req: Request, res: Response
 });
 
 // 3. Single Listing Verbatim
-app.get('/api/listings/:id', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> => {
   const listings = await queryCuratedListings({ listingId: req.params.id });
   const listing = listings[0];
   if (!listing) {

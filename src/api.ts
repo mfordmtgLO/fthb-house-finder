@@ -56,6 +56,7 @@ export async function fetchCuratedListings(filters: {
   maxMonthlyPayment?: number;
   program?: string;
   favorites?: string[];
+  leadId?: string;
 }): Promise<CuratedListing[]> {
   const params = new URLSearchParams();
   if (filters.city) params.append('city', filters.city);
@@ -67,13 +68,10 @@ export async function fetchCuratedListings(filters: {
   }
 
   const res = await fetch(`/api/listings?${params.toString()}`, {
-    headers: getAuthHeaders()
+    headers: getAuthHeaders(filters.leadId)
   });
 
   if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error('Unauthorized: Session or API Key required.');
-    }
     throw new Error(`Failed to fetch curated listings: ${res.statusText}`);
   }
 

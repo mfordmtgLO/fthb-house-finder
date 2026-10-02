@@ -94,7 +94,8 @@ export default function App() {
     fetchCuratedListings({
       city: selectedCity || undefined,
       program: selectedProgram && selectedProgram !== 'All Programs' ? selectedProgram : undefined,
-      maxMonthlyPayment: typeof maxMonthlyPayment === 'number' ? maxMonthlyPayment : undefined
+      maxMonthlyPayment: typeof maxMonthlyPayment === 'number' ? maxMonthlyPayment : undefined,
+      leadId
     })
       .then(data => {
         setListings(data);
