@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Deny-by-default for all collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Curated listings are read ONLY via backend Admin SDK (server-side).
+    // No direct public or client reads are permitted.
+    match /curated_listings/{listingId} {
+      allow read, write: if false;
+    }
+
+    // Vantage 2nd Brain knowledge base is read ONLY via backend Admin SDK.
+    match /vantage_knowledge/{docId} {
+      allow read, write: if false;
+    }
+
+    // Buyer profiles: buyers may read and write ONLY their own leadId document.
+    // Client must authenticate or present their leadId matching the document key.
+    match /fthb_buyers/{leadId} {
+      allow read, write: if request.auth != null && request.auth.uid == leadId;
+
+      // Favorites nested under the buyer's leadId
+      match /favorites/{favoriteId} {
+        allow read, write: if request.auth != null && request.auth.uid == leadId;
+      }
+
+      // Property notes nested under the buyer's leadId
+      match /notes/{propertyId} {
+        allow read, write: if request.auth != null && request.auth.uid == leadId;
+      }
+    }
+
+    // Persistent Muse conversation memory: isolated per buyer leadId
+    match /fthb_conversations/{leadId} {
+      allow read, write: if request.auth != null && request.auth.uid == leadId;
+
+      match /messages/{messageId} {
+        allow read, write: if request.auth != null && request.auth.uid == leadId;
+      }
+    }
+
+    // Co-branded Agent Pairings (read-only through backend or strict query)
+    match /pairings/{pairingId} {
+      allow read, write: if false;
+    }
+
+    match /agents/{agentId} {
+      allow read, write: if false;
+    }
+
+    // Audit ledger and TCPA compliance records: SERVER ONLY writes
+    match /compliance_audit_ledger/{auditId} {
+      allow read, write: if false;
+    }
+
+    // LO Devices: Mike Ford's registered iPhone device tokens for APNs push notifications
+    // Server-side Admin SDK read & write only (fail-closed, no public access)
+    match /lo_devices/{docId} {
+      allow read, write: if false;
+    }
+  }
+}
