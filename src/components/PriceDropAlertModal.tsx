@@ -94,7 +94,7 @@ export const PriceDropAlertModal: React.FC<PriceDropAlertModalProps> = ({
                   type="text"
                   value={contactValue}
                   onChange={(e) => setContactValue(e.target.value)}
-                  placeholder="(503) 555-0199 or name@example.com"
+                  placeholder="Phone number or name@example.com"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
                 />
               </div>

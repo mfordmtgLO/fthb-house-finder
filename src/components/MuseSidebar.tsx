@@ -12,7 +12,8 @@ import {
   Info,
   Sliders,
   CheckCircle2,
-  ExternalLink
+  ExternalLink,
+  X
 } from 'lucide-react';
 import { ChatMessage, CuratedListing } from '../types';
 import { sendMuseChatMessage, fetchMuseChatHistory } from '../api';
@@ -110,21 +111,21 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
   if (!isOpen) return null;
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-50 w-full sm:w-96 md:w-[420px] bg-slate-900 border-r border-slate-800 shadow-2xl flex flex-col pt-16 sm:pt-0">
+    <aside className="fixed inset-0 md:inset-y-0 md:left-0 z-50 w-full md:w-[420px] bg-slate-900 border-r border-slate-800 shadow-2xl flex flex-col h-[100dvh] md:h-screen overflow-hidden">
       {/* Sidebar Header */}
-      <div className="p-3.5 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border-b border-slate-800 flex items-center justify-between">
-        <div className="flex items-center space-x-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+      <div className="shrink-0 p-3.5 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center space-x-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 shrink-0">
             <Sparkles className="w-4 h-4 text-white" />
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center space-x-1.5">
-              <h2 className="text-sm font-bold text-white">Muse AI Assistant</h2>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono">
+              <h2 className="text-sm font-bold text-white truncate">Muse AI Assistant</h2>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono shrink-0">
                 3-Way Capable
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-slate-400 truncate">
               Coached by Mike Ford (NMLS #288455)
             </p>
           </div>
@@ -132,21 +133,22 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
 
         <button
           onClick={onClose}
-          className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 text-xs"
+          className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 text-sm font-semibold shrink-0 ml-2"
+          title="Close Muse Assistant"
         >
-          ✕
+          <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Renter Intake Quick-Action Helper Banner */}
-      <div className="bg-slate-950 px-3.5 py-2 border-b border-slate-800/80 flex items-center justify-between text-xs">
-        <span className="text-slate-400 flex items-center gap-1.5">
-          <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Renter Qualification Helpers:</span>
+      <div className="shrink-0 bg-slate-950 px-3.5 py-2 border-b border-slate-800/80 flex items-center justify-between text-xs">
+        <span className="text-slate-400 flex items-center gap-1.5 min-w-0 truncate">
+          <Sliders className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+          <span className="truncate">Renter Qualification Helpers:</span>
         </span>
         <button
           onClick={() => setShowIntakeForm(!showIntakeForm)}
-          className="text-xs text-cyan-400 hover:text-cyan-300 font-medium underline"
+          className="text-xs text-cyan-400 hover:text-cyan-300 font-medium underline shrink-0 ml-2"
         >
           {showIntakeForm ? 'Hide Helpers' : 'Income Slider'}
         </button>
@@ -154,7 +156,7 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
 
       {/* Income Bracket Slider (Non-Negotiable: Never exact income storage!) */}
       {showIntakeForm && (
-        <div className="bg-slate-950/90 border-b border-cyan-900/30 p-3.5 text-xs">
+        <div className="shrink-0 bg-slate-950/90 border-b border-cyan-900/30 p-3.5 text-xs">
           <div className="flex items-center justify-between mb-1.5">
             <span className="font-semibold text-slate-200">Annual Household Income Bracket:</span>
             <span className="font-mono text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40">
@@ -185,8 +187,8 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
         </div>
       )}
 
-      {/* Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5">
+      {/* Messages Stream: flex-1 with its own scroll and no dead space */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3.5 overscroll-contain">
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -319,55 +321,63 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggested Quick Questions */}
-      <div className="px-3.5 py-2 bg-slate-950 border-t border-slate-800/80 flex gap-2 overflow-x-auto text-[11px] no-scrollbar">
-        <button
-          onClick={() => handleSend('How does a 2-1 buydown lower my payment for the first two years?')}
-          className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-cyan-500/40"
-        >
-          2-1 Buydown Explainer
-        </button>
-        <button
-          onClick={() => handleSend('What are the best zero-down or low-down programs in Oregon and Washington?')}
-          className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-cyan-500/40"
-        >
-          0% & 3% Down Programs
-        </button>
-        <button
-          onClick={() => handleSend('Can I ask the seller for closing cost credits to minimize my out of pocket cash?')}
-          className="whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-cyan-500/40"
-        >
-          Seller Credits
-        </button>
-      </div>
-
-      {/* Input Box */}
-      <div className="p-3 bg-slate-900 border-t border-slate-800">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          className="flex items-center space-x-2"
-        >
-          <input
-            type="text"
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            placeholder="Ask Muse about stopping renting, payments, or homes..."
-            className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-          />
+      {/* Bottom Pinned Action Section: Pinned to bottom, no dead gap */}
+      <div className="shrink-0 bg-slate-900 border-t border-slate-800">
+        {/* Suggested Quick Questions: scroll-snap, whitespace-nowrap, pr-6 */}
+        <div className="px-3 py-2 bg-slate-950/90 border-b border-slate-800/60 flex items-center gap-2 overflow-x-auto scroll-smooth snap-x snap-mandatory text-[11px] no-scrollbar pr-6">
           <button
-            type="submit"
-            disabled={!inputMessage.trim() || loading}
-            className="p-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl shadow-md transition-all"
+            type="button"
+            onClick={() => handleSend('How does a 2-1 buydown lower my payment for the first two years?')}
+            className="shrink-0 snap-start whitespace-nowrap px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-cyan-500/40 transition-colors shadow-sm"
           >
-            <Send className="w-4 h-4" />
+            2-1 Buydown Explainer
           </button>
-        </form>
-        <p className="text-[10px] text-slate-500 text-center mt-1.5">
-          Confidential. PII scrubbed. Direct 3-way line with Mike Ford, NMLS #288455.
-        </p>
+          <button
+            type="button"
+            onClick={() => handleSend('What are the best zero-down or low-down programs in Oregon and Washington?')}
+            className="shrink-0 snap-start whitespace-nowrap px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-cyan-500/40 transition-colors shadow-sm"
+          >
+            0% & 3% Down Programs
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSend('Can I ask the seller for closing cost credits to minimize my out of pocket cash?')}
+            className="shrink-0 snap-start whitespace-nowrap px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-cyan-500/40 transition-colors shadow-sm"
+          >
+            Seller Credits
+          </button>
+          <div className="shrink-0 w-2" />
+        </div>
+
+        {/* Input Box: Full available width minus send button */}
+        <div className="p-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+            className="flex items-center gap-2 w-full min-w-0"
+          >
+            <input
+              type="text"
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              placeholder="Ask Muse about homes, rates, 0% down..."
+              className="flex-1 min-w-0 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+            />
+            <button
+              type="submit"
+              disabled={!inputMessage.trim() || loading}
+              className="shrink-0 p-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl shadow-md transition-all flex items-center justify-center"
+              title="Send message"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+          <p className="text-[10px] text-slate-500 text-center mt-1.5">
+            Confidential. PII scrubbed. Direct line with Mike Ford, NMLS #288455.
+          </p>
+        </div>
       </div>
     </aside>
   );

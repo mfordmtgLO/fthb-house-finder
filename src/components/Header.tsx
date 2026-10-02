@@ -16,6 +16,7 @@ interface HeaderProps {
   onOpenPublishing: () => void;
   onOpenInstallGuide: () => void;
   onOpenSimulator: () => void;
+  onOpenUsdaAdjuster: () => void;
   isSidebarOpen: boolean;
   setIsSidebarOpen: (open: boolean) => void;
   disclaimerServed: boolean;
@@ -38,6 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenPublishing,
   onOpenInstallGuide,
   onOpenSimulator,
+  onOpenUsdaAdjuster,
   isSidebarOpen,
   setIsSidebarOpen,
   disclaimerServed
@@ -52,6 +54,14 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden sm:inline text-slate-400">• Curated First-Time Homebuyer Low/No-Down Portal</span>
         </div>
         <div className="flex items-center space-x-3">
+          <button
+            onClick={onOpenUsdaAdjuster}
+            className="text-xs text-cyan-300 hover:text-cyan-200 underline font-medium flex items-center gap-1"
+            title="Open 2026 USDA & Lakeview AMI Income Adjuster"
+          >
+            <span>🌾 USDA Income Adjuster</span>
+          </button>
+          <span className="text-slate-500 hidden sm:inline">|</span>
           <button
             onClick={onOpenSimulator}
             className="text-xs text-amber-300 hover:text-amber-200 underline font-mono flex items-center gap-1"

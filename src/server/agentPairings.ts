@@ -35,7 +35,7 @@ export const MIKE_FORD_LO_PROFILE: LoanOfficerProfile = {
   name: 'Mike Ford',
   title: 'Senior Mortgage Loan Officer',
   nmlsId: '288455',
-  phone: '(503) 555-0199',
+  phone: '',
   email: 'fordmj@gmail.com', // Mike Ford's verified contact email
   photoUrl: '',
   company: 'Pacific Lending Group'

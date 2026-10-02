@@ -97,7 +97,7 @@ export const PreApprovalModal: React.FC<PreApprovalModalProps> = ({ listing, onC
                   required
                   value={buyerPhone}
                   onChange={(e) => setBuyerPhone(e.target.value)}
-                  placeholder="(503) 555-0123"
+                  placeholder="Your phone number"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
                 />
               </div>
@@ -129,7 +129,7 @@ export const PreApprovalModal: React.FC<PreApprovalModalProps> = ({ listing, onC
               </div>
 
               <div className="text-center pt-1 text-[11px] text-slate-500">
-                Or call Mike directly: <a href="tel:5035550199" className="text-cyan-400 font-mono hover:underline">(503) 555-0199</a>
+                Or reach Mike directly: <a href="mailto:fordmj@gmail.com" className="text-cyan-400 font-mono hover:underline">fordmj@gmail.com</a>
               </div>
             </form>
           )}

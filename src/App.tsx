@@ -19,6 +19,7 @@ import { PriceDropAlertModal } from './components/PriceDropAlertModal';
 import { PreApprovalModal } from './components/PreApprovalModal';
 import { PwaInstallGuideModal } from './components/PwaInstallGuideModal';
 import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
+import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
 import {
   Home,
   ShieldCheck,
@@ -28,7 +29,8 @@ import {
   ChevronRight,
   Info,
   Layers,
-  ArrowRight
+  ArrowRight,
+  MapPin
 } from 'lucide-react';
 
 export default function App() {
@@ -38,9 +40,14 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // View state
+  // View state: on mobile screens (<1024px), sidebar is closed initially to expose homes & map
   const [activeView, setActiveView] = useState<'list' | 'map'>('list');
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024;
+    }
+    return false;
+  });
 
   // Filters
   const [selectedCity, setSelectedCity] = useState<string>('');
@@ -60,6 +67,7 @@ export default function App() {
   const [isPublishingGeneralOpen, setIsPublishingGeneralOpen] = useState<boolean>(false);
   const [isInstallGuideOpen, setIsInstallGuideOpen] = useState<boolean>(false);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
+  const [isUsdaAdjusterOpen, setIsUsdaAdjusterOpen] = useState<boolean>(false);
 
   // Deep-linking map state
   const [deepLinkedListingId, setDeepLinkedListingId] = useState<string | null>(null);
@@ -163,6 +171,7 @@ export default function App() {
   const handleViewOnMap = (listing: CuratedListing) => {
     setDeepLinkedListingId(listing.id);
     setActiveView('map');
+    setIsSidebarOpen(false); // Close sidebar on mobile so map is immediately visible
   };
 
   return (
@@ -182,6 +191,7 @@ export default function App() {
         onOpenPublishing={() => setIsPublishingGeneralOpen(true)}
         onOpenInstallGuide={() => setIsInstallGuideOpen(true)}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
+        onOpenUsdaAdjuster={() => setIsUsdaAdjusterOpen(true)}
         isSidebarOpen={isSidebarOpen}
         setIsSidebarOpen={setIsSidebarOpen}
         disclaimerServed={disclaimerServed}
@@ -210,7 +220,7 @@ export default function App() {
         />
 
         {/* Content Canvas */}
-        <main className={`flex-1 transition-all duration-300 overflow-y-auto ${isSidebarOpen ? 'md:ml-[420px]' : ''}`}>
+        <main className={`flex-1 transition-all duration-300 overflow-y-auto pb-24 md:pb-6 ${isSidebarOpen ? 'md:ml-[420px]' : ''}`}>
           {/* Favorites Rail (Pinned Above Content) */}
           <FavoritesRail
             favorites={favorites}
@@ -335,6 +345,70 @@ export default function App() {
         </main>
       </div>
 
+      {/* Floating Chat Button: Repositioned with safe margins, hidden when Muse is open */}
+      {!isSidebarOpen && (
+        <button
+          onClick={() => setIsSidebarOpen(true)}
+          className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-30 p-3 sm:p-3.5 rounded-full bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-2xl shadow-cyan-950/80 border border-cyan-400/40 flex items-center gap-2 group transition-all duration-200 active:scale-95"
+          title="Open Muse AI Assistant"
+        >
+          <Sparkles className="w-5 h-5 text-white animate-pulse" />
+          <span className="text-xs font-bold hidden sm:inline pr-1">Ask Muse</span>
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-slate-900 absolute top-0.5 right-0.5"></span>
+        </button>
+      )}
+
+      {/* Mobile Tab Navigation Bar (390px safe, fixed at bottom) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 px-3 py-1.5 flex items-center justify-around shadow-2xl safe-bottom">
+        <button
+          onClick={() => {
+            setActiveView('map');
+            setIsSidebarOpen(false);
+          }}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
+            !isSidebarOpen && activeView === 'map'
+              ? 'text-cyan-400 font-bold bg-cyan-950/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <MapPin className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px]">Map</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveView('list');
+            setIsSidebarOpen(false);
+          }}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
+            !isSidebarOpen && activeView === 'list'
+              ? 'text-cyan-400 font-bold bg-cyan-950/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Home className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px]">Homes</span>
+        </button>
+
+        <button
+          onClick={() => setIsSidebarOpen(true)}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all relative ${
+            isSidebarOpen
+              ? 'text-cyan-400 font-bold bg-cyan-950/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <div className="relative">
+            <Sparkles className="w-5 h-5 mb-0.5 text-cyan-400" />
+            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          </div>
+          <span className="text-[11px] flex items-center gap-1">
+            <span>Muse</span>
+            <span className="text-[8px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono">3-Way</span>
+          </span>
+        </button>
+      </nav>
+
       {/* Modals Container */}
       {notesListing && (
         <PropertyNotesModal
@@ -398,6 +472,13 @@ export default function App() {
           onRefreshHistory={() => {
             showToast('History refreshed with Mike Ford reply!');
           }}
+        />
+      )}
+
+      {isUsdaAdjusterOpen && (
+        <UsdaIncomeAdjusterModal
+          isOpen={isUsdaAdjusterOpen}
+          onClose={() => setIsUsdaAdjusterOpen(false)}
         />
       )}
     </div>
