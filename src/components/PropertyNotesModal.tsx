@@ -11,7 +11,8 @@ import {
   Phone,
   Mail,
   Building2,
-  AlertCircle
+  AlertCircle,
+  UserCheck
 } from 'lucide-react';
 import { CuratedListing, PropertyThread, PropertyNoteMessage } from '../types';
 import { fetchPropertyThread, postPropertyNote } from '../api';
@@ -157,20 +158,27 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
               {/* Mike Ford LO Profile Card */}
               {thread?.loProfile && (
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-start gap-3">
-                  <img
-                    src={thread.loProfile.photoUrl}
-                    alt={thread.loProfile.name}
-                    className="w-12 h-12 rounded-full object-cover border border-cyan-500/40 flex-shrink-0"
-                  />
+                  {thread.loProfile.photoUrl ? (
+                    <img
+                      src={thread.loProfile.photoUrl}
+                      alt={thread.loProfile.name}
+                      className="w-12 h-12 rounded-full object-cover border border-cyan-500/40 flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-bold flex-shrink-0">
+                      <ShieldCheck className="w-6 h-6 text-cyan-400" />
+                    </div>
+                  )}
                   <div className="min-w-0 text-xs">
                     <span className="font-bold text-white block">{thread.loProfile.name}</span>
                     <span className="text-[11px] text-cyan-300 font-mono block">NMLS #{thread.loProfile.nmlsId}</span>
                     <span className="text-[11px] text-slate-400 block">{thread.loProfile.company}</span>
-                    <div className="mt-1.5 flex items-center gap-2 text-[10px] text-slate-400">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
                       <span className="flex items-center gap-0.5">
                         <Phone className="w-2.5 h-2.5 text-cyan-400" />
                         {thread.loProfile.phone}
                       </span>
+                      <span className="text-cyan-400/80 truncate">{thread.loProfile.email}</span>
                     </div>
                   </div>
                 </div>
@@ -179,11 +187,17 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
               {/* Partner Agent Profile Card (Or Honest Empty State) */}
               {thread?.agentProfile ? (
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-start gap-3">
-                  <img
-                    src={thread.agentProfile.photoUrl}
-                    alt={thread.agentProfile.name}
-                    className="w-12 h-12 rounded-full object-cover border border-indigo-500/40 flex-shrink-0"
-                  />
+                  {thread.agentProfile.photoUrl ? (
+                    <img
+                      src={thread.agentProfile.photoUrl}
+                      alt={thread.agentProfile.name}
+                      className="w-12 h-12 rounded-full object-cover border border-indigo-500/40 flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-indigo-950/80 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold flex-shrink-0">
+                      <UserCheck className="w-6 h-6 text-indigo-400" />
+                    </div>
+                  )}
                   <div className="min-w-0 text-xs">
                     <span className="font-bold text-white block">{thread.agentProfile.name}</span>
                     <span className="text-[11px] text-indigo-300 font-mono block">Lic #{thread.agentProfile.licenseNumber}</span>

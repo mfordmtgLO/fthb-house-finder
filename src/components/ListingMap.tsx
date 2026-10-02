@@ -98,9 +98,13 @@ export const ListingMap: React.FC<ListingMapProps> = ({
       const marker = L.marker([item.latitude, item.longitude], { icon: pinIcon }).addTo(map);
 
       // Popup Content (Verbatim RentCast Data + Program Tags + Notes + Heart)
+      const imageHtml = item.photoUrl
+        ? `<img src="${item.photoUrl}" style="width: 100%; height: 110px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" />`
+        : '';
+
       const popupHtml = `
         <div style="font-family: sans-serif; color: #f8fafc; width: 220px; line-height: 1.4;">
-          <img src="${item.photoUrl}" style="width: 100%; height: 110px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" />
+          ${imageHtml}
           <div style="font-size: 14px; font-weight: bold; color: #ffffff;">$${item.price?.toLocaleString()}</div>
           <div style="font-size: 11px; color: #38bdf8;">~$${item.estimatedMonthlyPayment?.toLocaleString()}/mo estimated</div>
           <div style="font-size: 12px; font-weight: 600; margin-top: 2px;">${item.address}</div>

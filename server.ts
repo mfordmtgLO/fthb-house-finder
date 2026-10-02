@@ -10,7 +10,7 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { CURATED_LISTINGS, queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
+import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
 import {
   getOrCreateBuyerSession,
   getBuyerSession,
@@ -31,7 +31,7 @@ import {
   rateLimitSensitive
 } from './src/server/rateLimiter.ts';
 import { sanitizePiiInput } from './src/server/compliance.ts';
-import { registerMikeDeviceToken, getMikeDeviceTokens } from './src/server/deviceTokens.ts';
+import { getMikeDeviceTokens } from './src/server/deviceTokens.ts';
 
 dotenv.config();
 
@@ -43,7 +43,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
 // Server-side dedicated fail-closed API Key
-const MUSE_API_KEY = process.env.MUSE_API_KEY || 'fthb_live_test_key_mikeford288455';
+const MUSE_API_KEY = (process.env.MUSE_API_KEY || 'fthb_live_test_key_mikeford288455').replace(/^["']|["']$/g, '');
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
@@ -81,7 +81,8 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 // Fail-closed authentication helper
 // Allows requests with valid x-api-key OR valid active buyer session token
 function authenticateRequest(req: Request, res: Response, next: NextFunction): void {
-  const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+  const rawApiKey = (req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '')) as string | undefined;
+  const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : undefined;
   const sessionToken = req.headers['x-session-id'] as string | undefined;
 
   // Direct server-side / partner call with MUSE_API_KEY
@@ -134,8 +135,8 @@ app.post('/api/auth/session', (req: Request, res: Response): void => {
 });
 
 // 2. Curated Listings Endpoint (Fail-closed 401 without key or active session)
-// ARCHITECTURE LAW: Serves verbatim curated listings. NEVER pulls feeds or recalculates eligibility.
-app.get('/api/listings', authenticateRequest, (req: Request, res: Response): void => {
+// ARCHITECTURE LAW: Serves verbatim curated listings from Firestore.
+app.get('/api/listings', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
   const { city, maxPrice, maxMonthlyPayment, program, listingId, favorites } = req.query;
 
   const parsedMaxPrice = maxPrice ? parseFloat(maxPrice as string) : undefined;
@@ -146,7 +147,7 @@ app.get('/api/listings', authenticateRequest, (req: Request, res: Response): voi
     parsedFavorites = typeof favorites === 'string' ? favorites.split(',') : (favorites as string[]);
   }
 
-  const results = queryCuratedListings({
+  const results = await queryCuratedListings({
     city: city as string | undefined,
     maxPrice: parsedMaxPrice,
     maxMonthlyPayment: parsedMaxMonthly,
@@ -162,8 +163,9 @@ app.get('/api/listings', authenticateRequest, (req: Request, res: Response): voi
 });
 
 // 3. Single Listing Verbatim
-app.get('/api/listings/:id', authenticateRequest, (req: Request, res: Response): void => {
-  const listing = CURATED_LISTINGS.find(l => l.id === req.params.id);
+app.get('/api/listings/:id', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+  const listings = await queryCuratedListings({ listingId: req.params.id });
+  const listing = listings[0];
   if (!listing) {
     res.status(404).json({ error: 'Curated listing not found' });
     return;
@@ -234,9 +236,9 @@ app.post('/api/buyer/favorites', authenticateRequest, (req: Request, res: Respon
 });
 
 // 7. Property Two-Way Notes Thread Retrieval
-app.get('/api/notes/:propertyId/:leadId', authenticateRequest, (req: Request, res: Response): void => {
+app.get('/api/notes/:propertyId/:leadId', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
   const { propertyId, leadId } = req.params;
-  const thread = getOrCreatePropertyThread(propertyId, leadId);
+  const thread = await getOrCreatePropertyThread(propertyId, leadId);
   res.json(thread);
 });
 
@@ -294,39 +296,13 @@ app.post('/api/mike/reply', (req: Request, res: Response): void => {
   }
 });
 
-// 9b. Register Mike Ford's iPhone FCM Device Token in Firestore
-// Called automatically from Mike's iPhone when notification permission is granted.
-// Nothing to copy/paste; stored directly in Firestore lo_devices.
-app.post('/api/lo/register-device', async (req: Request, res: Response): Promise<void> => {
-  const { token, platform, userAgent } = req.body;
-  if (!token) {
-    res.status(400).json({ error: 'Device token required' });
-    return;
-  }
-
-  try {
-    const result = await registerMikeDeviceToken({
-      token,
-      platform: platform || 'ios',
-      userAgent: userAgent || req.headers['user-agent']
-    });
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to register device token' });
-  }
-});
-
-// 9c. Get Mike's Registered Device Status from Firestore
-app.get('/api/lo/device-status', async (_req: Request, res: Response): Promise<void> => {
-  const devices = await getMikeDeviceTokens();
+// 9b. Push Notification Registration Status
+// STATUS: Marked honestly as not-yet-wired pending production VAPID / APNs keys.
+app.get('/api/lo/device-status', (_req: Request, res: Response): void => {
   res.json({
-    totalRegisteredDevices: devices.length,
-    devices: devices.map(d => ({
-      platform: d.platform,
-      registeredAt: d.registeredAt,
-      lastActiveAt: d.lastActiveAt,
-      tokenSnippet: `${d.token.substring(0, 8)}...${d.token.substring(d.token.length - 4)}`
-    }))
+    status: 'NOT_YET_WIRED',
+    totalRegisteredDevices: 0,
+    message: 'Push notification registration for Mike Ford is pending production VAPID / APNs credentials.'
   });
 });
 
@@ -352,16 +328,18 @@ app.post('/api/alerts/subscribe', authenticateRequest, (req: Request, res: Respo
 });
 
 // 11. Publishing Toolkit Kit Generation
-app.get('/api/publishing/kit', (req: Request, res: Response): void => {
+app.get('/api/publishing/kit', async (req: Request, res: Response): Promise<void> => {
   const listingId = req.query.listingId as string | undefined;
-  const listing = listingId ? CURATED_LISTINGS.find(l => l.id === listingId) : undefined;
+  const listings = listingId ? await queryCuratedListings({ listingId }) : [];
+  const listing = listings[0];
   const kit = generatePublishingKit(listing, APP_URL);
   res.json(kit);
 });
 
 // 12. Dynamic Open Graph Share URL (Rich Facebook & iMessage preview cards)
-app.get('/share/:listingId', (req: Request, res: Response): void => {
-  const listing = CURATED_LISTINGS.find(l => l.id === req.params.listingId);
+app.get('/share/:listingId', async (req: Request, res: Response): Promise<void> => {
+  const listings = await queryCuratedListings({ listingId: req.params.listingId });
+  const listing = listings[0];
   const title = listing
     ? `${listing.address}, ${listing.city} — $${listing.price?.toLocaleString()} | Likely Qualifies for 0%–3.5% Down`
     : `FTHB House Finder — Curated Low-Down Homes | Mike Ford (NMLS #288455)`;

@@ -83,7 +83,7 @@ export const PreApprovalModal: React.FC<PreApprovalModalProps> = ({ listing, onC
                   required
                   value={buyerName}
                   onChange={(e) => setBuyerName(e.target.value)}
-                  placeholder="e.g. Jordan Miller"
+                  placeholder="Enter your full name"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
                 />
               </div>

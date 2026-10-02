@@ -15,7 +15,8 @@ import {
   UserCheck,
   ArrowRight,
   ExternalLink,
-  Clock
+  Clock,
+  Home
 } from 'lucide-react';
 import { CuratedListing } from '../types';
 
@@ -47,19 +48,28 @@ export const ListingCard: React.FC<ListingCardProps> = ({
     ? listing._previousPrice - listing.price
     : null;
 
-  const photos = listing.galleryUrls && listing.galleryUrls.length > 0
-    ? listing.galleryUrls
-    : [listing.photoUrl];
+  const photos = (listing.galleryUrls && listing.galleryUrls.filter(Boolean).length > 0)
+    ? listing.galleryUrls.filter(Boolean)
+    : (listing.photoUrl ? [listing.photoUrl] : []);
+
+  const currentPhoto = photos[activePhotoIndex] || listing.photoUrl;
 
   return (
     <div className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden shadow-xl transition-all flex flex-col group">
       {/* Photo Header & Badges */}
       <div className="relative aspect-[16/10] bg-slate-950 overflow-hidden">
-        <img
-          src={photos[activePhotoIndex] || listing.photoUrl}
-          alt={listing.address}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-        />
+        {currentPhoto ? (
+          <img
+            src={currentPhoto}
+            alt={listing.address}
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950 text-slate-700 gap-2">
+            <Home className="w-12 h-12 stroke-[1.2] text-slate-600" />
+            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Curated Single-Family Home</span>
+          </div>
+        )}
 
         {/* Gradient Overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-black/30 pointer-events-none" />

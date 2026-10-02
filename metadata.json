@@ -2,5 +2,7 @@
   "name": "FTHB House Finder",
   "description": "Curated first-time homebuyer house finder, low/no-down payment qualifying homes, LO pre-approval and agent pairing by Mike Ford (NMLS #288455).",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

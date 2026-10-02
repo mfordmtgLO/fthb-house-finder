@@ -211,32 +211,10 @@ export async function submitMikeReply(params: {
   return res.json();
 }
 
-/**
- * Registers Mike Ford's iPhone FCM Device Token in Firestore
- * Triggered automatically upon granting notification permission.
- * No copy-pasting required.
- */
-export async function registerLoDevice(params: {
-  token: string;
-  platform?: 'ios' | 'android' | 'web';
-  userAgent?: string;
-}): Promise<{ success: boolean; totalActiveTokens: number }> {
-  const res = await fetch('/api/lo/register-device', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params)
-  });
-
-  if (!res.ok) {
-    throw new Error('Failed to register LO device');
-  }
-
-  return res.json();
-}
-
 export async function fetchLoDeviceStatus(): Promise<{
+  status: string;
   totalRegisteredDevices: number;
-  devices: Array<{ platform: string; registeredAt: string; tokenSnippet: string }>;
+  message: string;
 }> {
   const res = await fetch('/api/lo/device-status');
   if (!res.ok) {

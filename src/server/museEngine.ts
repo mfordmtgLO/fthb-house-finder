@@ -7,7 +7,7 @@
 
 import { GoogleGenAI } from '@google/genai';
 import { queryVantageGrounding } from './vantageKnowledge.ts';
-import { CURATED_LISTINGS, queryCuratedListings, type CuratedListing } from './curatedData.ts';
+import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAuditLedger } from './compliance.ts';
 
 export interface ChatMessage {
@@ -43,7 +43,7 @@ export interface BuyerSessionState {
 export const MANDATORY_SESSION_DISCLAIMER =
   'Price caps, income qualifiers, census tracts, listing price, status, and program eligibility are not guaranteed; pre-screened for your curated experience; must be confirmed by your licensed loan officer and local real estate agent. Pre-approval must be obtained from your loan officer.';
 
-// In-memory per-buyer memory store (mirrored to Firestore fthb_conversations/{leadId})
+// Server-side per-buyer session store
 const sessionStore = new Map<string, BuyerSessionState>();
 
 export function getOrCreateBuyerSession(leadId: string, ipAddress: string): BuyerSessionState {
@@ -158,14 +158,13 @@ export async function handleBuyerMessage(
   // Generate Platter if city or preferences known
   let platter: CuratedListing[] = [];
   if (session.statedPreferences.city || session.statedPreferences.maxMonthlyPayment) {
-    platter = queryCuratedListings({
+    platter = await queryCuratedListings({
       city: session.statedPreferences.city,
       maxPrice: session.statedPreferences.maxPrice,
       maxMonthlyPayment: session.statedPreferences.maxMonthlyPayment
     });
-  }
-  if (platter.length === 0) {
-    platter = CURATED_LISTINGS.slice(0, 3);
+  } else {
+    platter = await queryCuratedListings({});
   }
 
   // Attempt server-side Gemini API call
@@ -221,7 +220,11 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
     } else if (!session.statedPreferences.maxMonthlyPayment) {
       museReplyText = `Awesome! I've marked **${session.statedPreferences.city}** as your preferred focus.\n\nWhat is your comfortable target monthly mortgage payment? For example, if you're currently paying $2,200 in rent, would you prefer to stay around that, or do you have a ceiling like $2,500 to $2,800/mo?`;
     } else {
-      museReplyText = `Here is a curated platter of single-family homes in **${session.statedPreferences.city}** that likely qualify for our low-down and 0% down programs! Notice how homes with 2-1 buydowns can knock hundreds off your monthly payment during the first two years.\n\nHeart up to 3 favorites, and if you want to see any of these in person, let's ping Mike to connect you with our vetted local real estate partner for a private tour.`;
+      if (platter.length > 0) {
+        museReplyText = `Here is a curated platter of single-family homes in **${session.statedPreferences.city}** that likely qualify for our low-down and 0% down programs! Notice how homes with 2-1 buydowns can knock hundreds off your monthly payment during the first two years.\n\nHeart up to 3 favorites, and if you want to see any of these in person, let's ping Mike to connect you with our vetted local real estate partner for a private tour.`;
+      } else {
+        museReplyText = `I've noted your preferences for **${session.statedPreferences.city}**. We don't have active curated single-family homes loaded from Firestore matching this exact filter right now. Let's check in with Mike to review new inventory coming through the pipeline or adjust your target parameters!`;
+      }
     }
   }
 

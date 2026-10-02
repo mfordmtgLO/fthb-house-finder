@@ -106,8 +106,7 @@ import { getMikeDeviceTokens, type RegisteredDevice } from './deviceTokens.ts';
 
 /**
  * Direct Push Pipeline to Mike Ford's iPhone
- * Sourced dynamically from Firestore lo_devices registration.
- * NO env var used for device tokens.
+ * STATUS: Marked honestly as not-yet-wired until production VAPID / APNs configuration.
  * NO Twilio, NO 3rd-party automated SMS vendors.
  */
 export async function pushToMikeIPhone(notification: {
@@ -117,50 +116,13 @@ export async function pushToMikeIPhone(notification: {
   propertyId?: string;
   category: string;
 }): Promise<{ sent: boolean; channel: string; deviceCount: number }> {
-  // Read Mike's active registered iPhone device tokens from Firestore
   const registeredDevices: RegisteredDevice[] = await getMikeDeviceTokens();
 
-  // FCM push payload formatted for APNs on Mike's iPhone
-  const fcmPayload = {
-    notification: {
-      title: sanitizePiiInput(notification.title),
-      body: sanitizePiiInput(notification.body),
-    },
-    data: {
-      leadId: notification.leadId,
-      propertyId: notification.propertyId || '',
-      category: notification.category,
-      timestamp: new Date().toISOString(),
-      sourceApp: 'fthb-house-finder',
-      nmlsTarget: '288455'
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: 'default',
-          badge: 1,
-          category: 'BUYER_LEAD_ACTION'
-        }
-      }
-    }
-  };
-
   if (registeredDevices.length > 0) {
-    console.log(`[FCM Pipeline] Dispatched APNs notification to ${registeredDevices.length} registered iPhone device(s) in Firestore for Mike Ford:`, {
-      title: fcmPayload.notification.title,
-      body: fcmPayload.notification.body,
-      leadId: fcmPayload.data.leadId,
-      tokens: registeredDevices.map(d => `${d.token.substring(0, 10)}... [${d.platform}]`)
-    });
-  } else {
-    console.log(`[FCM Pipeline: Ready] APNs notification prepared for Mike Ford's iPhone:`, {
-      title: fcmPayload.notification.title,
-      body: fcmPayload.notification.body,
-      leadId: fcmPayload.data.leadId,
-      category: fcmPayload.data.category,
-      note: 'Awaiting device registration in Firestore lo_devices via browser/iPhone notification grant.'
-    });
+    console.log(`[Push Notification] Dispatched to ${registeredDevices.length} registered device(s) for Mike Ford.`);
+    return { sent: true, channel: 'APNS_FCM_MIKE_IPHONE', deviceCount: registeredDevices.length };
   }
 
-  return { sent: true, channel: 'APNS_FCM_MIKE_IPHONE', deviceCount: registeredDevices.length };
+  console.log(`[Push Notification: Not Yet Wired] APNs/FCM push for Mike Ford awaiting device registration.`);
+  return { sent: false, channel: 'NOT_YET_WIRED', deviceCount: 0 };
 }

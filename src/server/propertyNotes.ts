@@ -3,12 +3,12 @@
  * Property Notes & Two-Way Conversations Engine
  * Homebuyer property_conversations pattern: {propertyId}_{leadId}
  * Strict audit ledger writes, TCPA opt-in tracking, question auto-detection,
- * and LO + Agent co-branded pairings lookup.
+ * and dynamic LO + Agent co-branded pairings lookup from Firestore via Admin SDK.
  */
 
 import { sanitizePiiInput, detectBuyerActionItems, recordAuditLedger, pushToMikeIPhone } from './compliance.ts';
 import { MIKE_FORD_LO_PROFILE, getPairedAgentForCity, type LoanOfficerProfile, type AgentProfile } from './agentPairings.ts';
-import { CURATED_LISTINGS } from './curatedData.ts';
+import { queryCuratedListings } from './curatedData.ts';
 
 export interface PropertyNoteMessage {
   id: string;
@@ -32,17 +32,18 @@ export interface PropertyThread {
   agentProfile: AgentProfile | null; // null if unassigned (honest empty state)
 }
 
-// In-memory property threads keyed by `${propertyId}_${leadId}` (mirrored to Firestore)
+// Server property thread store
 const threadStore = new Map<string, PropertyThread>();
 
-export function getOrCreatePropertyThread(propertyId: string, leadId: string): PropertyThread {
+export async function getOrCreatePropertyThread(propertyId: string, leadId: string): Promise<PropertyThread> {
   const threadId = `${propertyId}_${leadId}`;
   let thread = threadStore.get(threadId);
 
   if (!thread) {
-    const listing = CURATED_LISTINGS.find(l => l.id === propertyId);
+    const listings = await queryCuratedListings({ listingId: propertyId });
+    const listing = listings[0];
     const propertyAddress = listing ? `${listing.address}, ${listing.city}` : 'Curated Home';
-    const pairedAgent = listing ? getPairedAgentForCity(listing.city) : null;
+    const pairedAgent = listing ? await getPairedAgentForCity(listing.city) : null;
 
     thread = {
       threadId,
@@ -70,7 +71,7 @@ export async function addPropertyNote(params: {
   tcpaAccepted?: boolean;
 }): Promise<PropertyNoteMessage> {
   const { propertyId, leadId, authorName, text, ipAddress, tcpaAccepted } = params;
-  const thread = getOrCreatePropertyThread(propertyId, leadId);
+  const thread = await getOrCreatePropertyThread(propertyId, leadId);
   const cleanText = sanitizePiiInput(text);
 
   const actionCheck = detectBuyerActionItems(cleanText);
@@ -82,8 +83,7 @@ export async function addPropertyNote(params: {
       actionType: 'TCPA_OPT_IN',
       propertyId,
       ipAddress,
-      redactedPayload: { noteExcerpt: cleanText.substring(0, 50) },
-      tcpaLanguageVersion: 'TCPA_CONSENT_V1_2026'
+      redactedPayload: { authorName: sanitizePiiInput(authorName), textPreview: cleanText.substring(0, 40) }
     });
   }
 
@@ -93,42 +93,59 @@ export async function addPropertyNote(params: {
     actionType: 'PROPERTY_NOTE',
     propertyId,
     ipAddress,
-    redactedPayload: { noteExcerpt: cleanText.substring(0, 100) }
+    redactedPayload: { authorName: sanitizePiiInput(authorName), isQuestion: actionCheck.isQuestion }
   });
 
-  const message: PropertyNoteMessage = {
+  const noteMsg: PropertyNoteMessage = {
     id: `note-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     sender: 'buyer',
-    authorName: sanitizePiiInput(authorName || 'Buyer'),
+    authorName: sanitizePiiInput(authorName) || 'Homebuyer',
     text: cleanText,
     timestamp: new Date().toISOString(),
     isQuestion: actionCheck.isQuestion,
     actionCategory: actionCheck.actionCategory
   };
 
-  thread.messages.push(message);
+  thread.messages.push(noteMsg);
   thread.updatedAt = new Date().toISOString();
 
-  // If question detected, push to Mike's iPhone
+  // If question detected, notify Mike Ford's iPhone
   if (actionCheck.isQuestion) {
     await pushToMikeIPhone({
-      title: `Property Note Question: ${thread.propertyAddress}`,
-      body: cleanText,
+      title: `Buyer Question on ${thread.propertyAddress}`,
+      body: `[${noteMsg.authorName}]: ${cleanText}`,
       leadId,
       propertyId,
-      category: actionCheck.actionCategory || 'NOTE_QUESTION'
+      category: actionCheck.actionCategory || 'PROPERTY_NOTE_QUESTION'
     });
   }
 
-  return message;
+  return noteMsg;
 }
 
 export function addMikePropertyReply(propertyId: string, leadId: string, replyText: string): PropertyNoteMessage {
-  const thread = getOrCreatePropertyThread(propertyId, leadId);
+  const threadId = `${propertyId}_${leadId}`;
+  let thread = threadStore.get(threadId);
+
+  if (!thread) {
+    thread = {
+      threadId,
+      propertyId,
+      leadId,
+      propertyAddress: 'Curated Home',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+      loProfile: MIKE_FORD_LO_PROFILE,
+      agentProfile: null
+    };
+    threadStore.set(threadId, thread);
+  }
+
   const cleanText = sanitizePiiInput(replyText);
 
-  const message: PropertyNoteMessage = {
-    id: `note-${Date.now()}-mike`,
+  const replyMsg: PropertyNoteMessage = {
+    id: `reply-${Date.now()}-mike`,
     sender: 'lo',
     authorName: 'Mike Ford (NMLS #288455)',
     text: cleanText,
@@ -136,7 +153,8 @@ export function addMikePropertyReply(propertyId: string, leadId: string, replyTe
     isQuestion: false
   };
 
-  thread.messages.push(message);
+  thread.messages.push(replyMsg);
   thread.updatedAt = new Date().toISOString();
-  return message;
+
+  return replyMsg;
 }
