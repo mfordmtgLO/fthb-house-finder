@@ -1,14 +1,17 @@
 // Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
 /**
  * Muse AI Conversational Engine
- * Renter-to-Buyer intake, 2nd Brain knowledge grounding,
- * persistent memory, 3-way Mike-in-the-loop, and curated platter matching.
+ * Persistent memory backed by Firestore Admin SDK (collection: fthb_conversations/{leadId}).
+ * In-memory Map serves as transient cache only — Firestore is the sole source of truth.
+ * Every chat message (buyer, Muse, and Mike replies) is PII-scrubbed before write.
+ * Mike's conversation inbox reads directly from fthb_conversations.
  */
 
 import { GoogleGenAI } from '@google/genai';
 import { queryVantageGrounding } from './vantageKnowledge.ts';
 import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAuditLedger } from './compliance.ts';
+import { getAdminFirestore } from './firebaseAdmin.ts';
 
 export interface ChatMessage {
   id: string;
@@ -43,11 +46,104 @@ export interface BuyerSessionState {
 export const MANDATORY_SESSION_DISCLAIMER =
   'Price caps, income qualifiers, census tracts, listing price, status, and program eligibility are not guaranteed; pre-screened for your curated experience; must be confirmed by your licensed loan officer and local real estate agent. Pre-approval must be obtained from your loan officer.';
 
-// Server-side per-buyer session store
-const sessionStore = new Map<string, BuyerSessionState>();
+// In-memory cache (transient cache only; Firestore is source of truth)
+const sessionCache = new Map<string, BuyerSessionState>();
 
-export function getOrCreateBuyerSession(leadId: string, ipAddress: string): BuyerSessionState {
-  let session = sessionStore.get(leadId);
+/**
+ * Persists session state and messages to Firestore fthb_conversations/{leadId}
+ * Every message text has PII scrub applied before write.
+ */
+async function saveConversationToFirestore(session: BuyerSessionState): Promise<void> {
+  sessionCache.set(session.leadId, session);
+
+  const db = getAdminFirestore();
+  if (!db) {
+    return;
+  }
+
+  try {
+    // PII scrub applied before write to every message
+    const sanitizedMessages = session.messages.map(m => ({
+      ...m,
+      text: sanitizePiiInput(m.text)
+    }));
+
+    await db.collection('fthb_conversations').doc(session.leadId).set({
+      leadId: session.leadId,
+      createdAt: session.createdAt,
+      lastActiveAt: session.lastActiveAt,
+      disclaimerServed: session.disclaimerServed,
+      intakeCompleted: session.intakeCompleted,
+      statedPreferences: session.statedPreferences,
+      messages: sanitizedMessages,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('[Firebase Admin] Error persisting conversation to fthb_conversations:', err.message);
+  }
+}
+
+/**
+ * Loads conversation state from Firestore fthb_conversations/{leadId} via Admin SDK.
+ * Returns null if no document exists or Firestore is unreachable.
+ */
+async function loadConversationFromFirestore(leadId: string): Promise<BuyerSessionState | null> {
+  const db = getAdminFirestore();
+  if (!db) {
+    return null;
+  }
+
+  try {
+    const doc = await db.collection('fthb_conversations').doc(leadId).get();
+    if (!doc.exists) {
+      return null;
+    }
+    const data = doc.data();
+    if (!data) return null;
+
+    const session: BuyerSessionState = {
+      leadId: doc.id,
+      createdAt: data.createdAt || new Date().toISOString(),
+      lastActiveAt: data.lastActiveAt || new Date().toISOString(),
+      disclaimerServed: Boolean(data.disclaimerServed),
+      intakeCompleted: Boolean(data.intakeCompleted),
+      statedPreferences: data.statedPreferences || { favorites: [], viewedListingIds: [] },
+      messages: Array.isArray(data.messages)
+        ? data.messages.map((m: any) => ({
+            id: m.id || `msg-${Date.now()}`,
+            sender: m.sender || 'muse',
+            text: sanitizePiiInput(m.text || ''),
+            timestamp: m.timestamp || new Date().toISOString(),
+            suggestedAction: m.suggestedAction,
+            citations: Array.isArray(m.citations) ? m.citations : undefined,
+            platterListings: Array.isArray(m.platterListings) ? m.platterListings : undefined,
+            isEscalation: Boolean(m.isEscalation)
+          }))
+        : []
+    };
+
+    sessionCache.set(leadId, session);
+    return session;
+  } catch (err: any) {
+    console.warn('[Firebase Admin] Error loading conversation from fthb_conversations:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Loads history from Firestore on session start.
+ * Falls back to a new session only when none exists in Firestore.
+ */
+export async function getOrCreateBuyerSession(leadId: string, ipAddress: string): Promise<BuyerSessionState> {
+  // 1. Load history from Firestore first (source of truth)
+  let session = await loadConversationFromFirestore(leadId);
+
+  // 2. Cache fallback if Firestore is temporarily offline but session was in cache
+  if (!session && sessionCache.has(leadId)) {
+    session = sessionCache.get(leadId)!;
+  }
+
+  // 3. Fallback to a new session only when none exists
   if (!session) {
     session = {
       leadId,
@@ -61,7 +157,6 @@ export function getOrCreateBuyerSession(leadId: string, ipAddress: string): Buye
       },
       messages: []
     };
-    sessionStore.set(leadId, session);
   }
 
   // Ensure disclaimer served once per session
@@ -74,28 +169,36 @@ export function getOrCreateBuyerSession(leadId: string, ipAddress: string): Buye
       redactedPayload: { disclaimer: MANDATORY_SESSION_DISCLAIMER }
     });
 
-    session.messages.push({
+    const disclaimerMsg: ChatMessage = {
       id: `msg-${Date.now()}-disclaimer`,
       sender: 'muse',
       text: `Welcome to FTHB House Finder! I'm Muse, Mike Ford's first-time buyer assistant.\n\n*Important Lending Note: ${MANDATORY_SESSION_DISCLAIMER}*\n\nIf you're currently renting and curious what buying a home might look like with zero or low down payment, I can help you find curated homes in our Pacific Northwest network that likely qualify. Where are you thinking of living?`,
       timestamp: new Date().toISOString(),
       citations: ['NMLS Consumer Access #288455', 'CFPB Reg Z 12 CFR § 1026.24']
-    });
+    };
+    session.messages.push(disclaimerMsg);
   }
 
   session.lastActiveAt = new Date().toISOString();
+  await saveConversationToFirestore(session);
   return session;
 }
 
-export function getBuyerSession(leadId: string): BuyerSessionState | null {
-  return sessionStore.get(leadId) || null;
+export async function getBuyerSession(leadId: string): Promise<BuyerSessionState | null> {
+  const fromFirestore = await loadConversationFromFirestore(leadId);
+  if (fromFirestore) {
+    return fromFirestore;
+  }
+  return sessionCache.get(leadId) || null;
 }
 
-export function updateBuyerFavorites(leadId: string, favorites: string[]): void {
-  const session = sessionStore.get(leadId);
+export async function updateBuyerFavorites(leadId: string, favorites: string[]): Promise<void> {
+  const session = await getBuyerSession(leadId);
   if (session) {
     // 3-favorite cap enforced
     session.statedPreferences.favorites = favorites.slice(0, 3);
+    session.lastActiveAt = new Date().toISOString();
+    await saveConversationToFirestore(session);
   }
 }
 
@@ -103,16 +206,17 @@ export function updateBuyerFavorites(leadId: string, favorites: string[]): void 
  * Handle incoming message from the buyer
  * 3-way capable: triggers FCM push to Mike's iPhone, extracts preferences,
  * grounds with 2nd brain, serves platter if ready, and responds via Gemini API.
+ * Every message is PII scrubbed and persisted to fthb_conversations/{leadId}.
  */
 export async function handleBuyerMessage(
   leadId: string,
   rawText: string,
   ipAddress: string
 ): Promise<ChatMessage> {
-  const session = getOrCreateBuyerSession(leadId, ipAddress);
+  const session = await getOrCreateBuyerSession(leadId, ipAddress);
   const cleanText = sanitizePiiInput(rawText);
 
-  // Record buyer message in session memory
+  // Record buyer message in session
   const buyerMsg: ChatMessage = {
     id: `msg-${Date.now()}-buyer`,
     sender: 'buyer',
@@ -120,6 +224,7 @@ export async function handleBuyerMessage(
     timestamp: new Date().toISOString()
   };
   session.messages.push(buyerMsg);
+  session.lastActiveAt = new Date().toISOString();
 
   // Detect questions and action items
   const actionCheck = detectBuyerActionItems(cleanText);
@@ -131,7 +236,7 @@ export async function handleBuyerMessage(
       redactedPayload: { questionText: cleanText, category: actionCheck.actionCategory }
     });
 
-    // Fire FCM push directly to Mike Ford's iPhone
+    // Fire direct push notification
     await pushToMikeIPhone({
       title: `FTHB Buyer Question (${actionCheck.actionCategory})`,
       body: cleanText,
@@ -142,6 +247,9 @@ export async function handleBuyerMessage(
 
   // Parse intake signals from message text
   extractPreferencesFromText(cleanText, session);
+
+  // Persist session state after buyer message
+  await saveConversationToFirestore(session);
 
   // Check for specific math or complex rate quotes -> trigger escalation rule
   const isComplexMathOrQuote =
@@ -203,13 +311,16 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
         contents: prompt
       });
 
-      museReplyText = response.text || '';
-    } catch (err) {
-      console.warn('[Muse Gemini Error, using fallback engine]', err);
+      if (response.text) {
+        museReplyText = response.text.trim();
+        citations.push('Vantage 2nd Brain Knowledge Base', 'Gemini 2.5 Flash');
+      }
+    } catch (e: unknown) {
+      console.warn('[Muse Gemini Fallback Activated]', e);
     }
   }
 
-  // High-fidelity fallback / escalation generator if API key is not active or for math queries
+  // Deterministic Compliance Fallback if Gemini not keyed or rate limited
   if (!museReplyText) {
     if (isComplexMathOrQuote) {
       isEscalation = true;
@@ -235,7 +346,7 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
   const replyMsg: ChatMessage = {
     id: `msg-${Date.now()}-muse`,
     sender: 'muse',
-    text: museReplyText,
+    text: sanitizePiiInput(museReplyText),
     timestamp: new Date().toISOString(),
     citations,
     platterListings: platter.slice(0, 3),
@@ -244,15 +355,19 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
   };
 
   session.messages.push(replyMsg);
+  session.lastActiveAt = new Date().toISOString();
+
+  // Persist Muse reply to Firestore
+  await saveConversationToFirestore(session);
   return replyMsg;
 }
 
 /**
  * Handle incoming message from Mike Ford (3-Way Chat capability)
- * Appears seamlessly in the buyer's conversation stream.
+ * Appears seamlessly in the buyer's conversation stream and persists to Firestore fthb_conversations.
  */
-export function handleMikeReply(leadId: string, replyText: string): ChatMessage {
-  const session = getOrCreateBuyerSession(leadId, 'internal');
+export async function handleMikeReply(leadId: string, replyText: string): Promise<ChatMessage> {
+  const session = await getOrCreateBuyerSession(leadId, 'internal');
   const cleanText = sanitizePiiInput(replyText);
 
   const mikeMsg: ChatMessage = {
@@ -263,7 +378,62 @@ export function handleMikeReply(leadId: string, replyText: string): ChatMessage 
   };
 
   session.messages.push(mikeMsg);
+  session.lastActiveAt = new Date().toISOString();
+
+  // Persist Mike reply to Firestore
+  await saveConversationToFirestore(session);
   return mikeMsg;
+}
+
+/**
+ * Reads Mike Ford's conversation inbox directly from fthb_conversations in Firestore via Admin SDK.
+ * Returns all active buyer threads sorted by lastActiveAt descending.
+ */
+export async function getMikeConversationInbox(): Promise<BuyerSessionState[]> {
+  const db = getAdminFirestore();
+  if (db) {
+    try {
+      const snap = await db.collection('fthb_conversations').limit(50).get();
+      if (!snap.empty) {
+        const conversations: BuyerSessionState[] = [];
+        snap.forEach(doc => {
+          const data = doc.data();
+          conversations.push({
+            leadId: doc.id,
+            createdAt: data.createdAt || new Date().toISOString(),
+            lastActiveAt: data.lastActiveAt || new Date().toISOString(),
+            disclaimerServed: Boolean(data.disclaimerServed),
+            intakeCompleted: Boolean(data.intakeCompleted),
+            statedPreferences: data.statedPreferences || { favorites: [], viewedListingIds: [] },
+            messages: Array.isArray(data.messages)
+              ? data.messages.map((m: any) => ({
+                  id: m.id || `msg-${Date.now()}`,
+                  sender: m.sender || 'muse',
+                  text: sanitizePiiInput(m.text || ''),
+                  timestamp: m.timestamp || new Date().toISOString(),
+                  suggestedAction: m.suggestedAction,
+                  citations: Array.isArray(m.citations) ? m.citations : undefined,
+                  platterListings: Array.isArray(m.platterListings) ? m.platterListings : undefined,
+                  isEscalation: Boolean(m.isEscalation)
+                }))
+              : []
+          });
+        });
+
+        conversations.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());
+        // Sync cache
+        conversations.forEach(c => sessionCache.set(c.leadId, c));
+        return conversations;
+      }
+    } catch (err: any) {
+      console.warn('[Firebase Admin] Error loading inbox from fthb_conversations:', err.message);
+    }
+  }
+
+  // Fallback to cache if Firestore offline
+  const cached = Array.from(sessionCache.values());
+  cached.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());
+  return cached;
 }
 
 function extractPreferencesFromText(text: string, session: BuyerSessionState) {

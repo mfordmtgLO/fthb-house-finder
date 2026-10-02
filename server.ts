@@ -16,7 +16,8 @@ import {
   getBuyerSession,
   handleBuyerMessage,
   handleMikeReply,
-  updateBuyerFavorites
+  updateBuyerFavorites,
+  getMikeConversationInbox
 } from './src/server/museEngine.ts';
 import {
   getOrCreatePropertyThread,
@@ -80,7 +81,7 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 
 // Fail-closed authentication helper
 // Allows requests with valid x-api-key OR valid active buyer session token
-function authenticateRequest(req: Request, res: Response, next: NextFunction): void {
+async function authenticateRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
   const rawApiKey = (req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '')) as string | undefined;
   const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : undefined;
   const sessionToken = req.headers['x-session-id'] as string | undefined;
@@ -91,8 +92,11 @@ function authenticateRequest(req: Request, res: Response, next: NextFunction): v
   }
 
   // Active verified buyer session
-  if (sessionToken && getBuyerSession(sessionToken)) {
-    return next();
+  if (sessionToken) {
+    const session = await getBuyerSession(sessionToken);
+    if (session) {
+      return next();
+    }
   }
 
   res.status(401).json({
@@ -106,7 +110,7 @@ function authenticateRequest(req: Request, res: Response, next: NextFunction): v
 // -----------------------------------------------------------------------------
 
 // 1. Buyer Session Initialization & Intake (Tier 2 Rate Limit: 20 leads / 15 min)
-app.post('/api/auth/session', (req: Request, res: Response): void => {
+app.post('/api/auth/session', async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
   const leadsCheck = rateLimitLeads(ip);
 
@@ -123,7 +127,7 @@ app.post('/api/auth/session', (req: Request, res: Response): void => {
     ? existingLeadId
     : `lead-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-  const session = getOrCreateBuyerSession(leadId, ip);
+  const session = await getOrCreateBuyerSession(leadId, ip);
 
   res.json({
     leadId: session.leadId,
@@ -201,10 +205,10 @@ app.post('/api/muse/chat', authenticateRequest, async (req: Request, res: Respon
   }
 });
 
-// 5. Muse Chat History Retrieval (Per-buyer isolation)
-app.get('/api/muse/history/:leadId', authenticateRequest, (req: Request, res: Response): void => {
+// 5. Muse Chat History Retrieval (Per-buyer isolation from Firestore)
+app.get('/api/muse/history/:leadId', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
   const leadId = req.params.leadId;
-  const session = getBuyerSession(leadId);
+  const session = await getBuyerSession(leadId);
   if (!session) {
     res.json({ messages: [], statedPreferences: { favorites: [] } });
     return;
@@ -218,7 +222,7 @@ app.get('/api/muse/history/:leadId', authenticateRequest, (req: Request, res: Re
 });
 
 // 6. Update Buyer Favorites (Strict 3-favorite cap enforced)
-app.post('/api/buyer/favorites', authenticateRequest, (req: Request, res: Response): void => {
+app.post('/api/buyer/favorites', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
   const { leadId, favorites } = req.body;
   if (!leadId || !Array.isArray(favorites)) {
     res.status(400).json({ error: 'leadId and favorites array required' });
@@ -227,7 +231,7 @@ app.post('/api/buyer/favorites', authenticateRequest, (req: Request, res: Respon
 
   // Enforce cap: heart up to 3
   const capped = favorites.slice(0, 3);
-  updateBuyerFavorites(leadId, capped);
+  await updateBuyerFavorites(leadId, capped);
 
   res.json({
     success: true,
@@ -274,7 +278,7 @@ app.post('/api/notes', authenticateRequest, async (req: Request, res: Response):
 });
 
 // 9. Mike Ford LO 3-Way Reply (Simulates Mike replying from iPhone)
-app.post('/api/mike/reply', (req: Request, res: Response): void => {
+app.post('/api/mike/reply', async (req: Request, res: Response): Promise<void> => {
   const apiKey = req.headers['x-api-key'];
   if (apiKey !== MUSE_API_KEY) {
     res.status(401).json({ error: 'Unauthorized: MUSE_API_KEY required for LO direct replies' });
@@ -291,8 +295,28 @@ app.post('/api/mike/reply', (req: Request, res: Response): void => {
     const msg = addMikePropertyReply(propertyId, leadId, text);
     res.json({ success: true, channel: 'PROPERTY_NOTE', message: msg });
   } else {
-    const msg = handleMikeReply(leadId, text);
+    const msg = await handleMikeReply(leadId, text);
     res.json({ success: true, channel: 'MUSE_CHAT', message: msg });
+  }
+});
+
+// 9a. Mike Ford LO Conversation Inbox (Reads directly from Firestore fthb_conversations)
+app.get('/api/mike/inbox', async (req: Request, res: Response): Promise<void> => {
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey !== MUSE_API_KEY) {
+    res.status(401).json({ error: 'Unauthorized: MUSE_API_KEY required for LO inbox access' });
+    return;
+  }
+
+  try {
+    const conversations = await getMikeConversationInbox();
+    res.json({
+      totalCount: conversations.length,
+      conversations
+    });
+  } catch (err: any) {
+    console.error('[Mike Inbox Error]', err);
+    res.status(500).json({ error: 'Failed to retrieve conversation inbox' });
   }
 });
 

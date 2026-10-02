@@ -223,3 +223,20 @@ export async function fetchLoDeviceStatus(): Promise<{
   return res.json();
 }
 
+export async function fetchMikeInbox(apiKey: string): Promise<{
+  totalCount: number;
+  conversations: any[];
+}> {
+  const res = await fetch('/api/mike/inbox', {
+    headers: {
+      'x-api-key': apiKey
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error('Unauthorized or failed to fetch LO inbox');
+  }
+
+  return res.json();
+}
+
