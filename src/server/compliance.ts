@@ -62,23 +62,51 @@ export function validateIncomeBracket(val: string): IncomeBracket | null {
  */
 export function detectBuyerActionItems(text: string): { isQuestion: boolean; actionCategory: string | null } {
   const lower = text.toLowerCase();
-  const questionWords = ['how', 'what', 'can i', 'qualify', 'down payment', 'monthly payment', 'rate', 'credit', 'schedule', 'tour', 'offer', 'buydown', 'help', '?'];
+  const questionWords = [
+    'how', 'what', 'can i', 'qualify', 'down payment', 'monthly payment',
+    'rate', 'credit', 'schedule', 'tour', 'offer', 'buydown', 'help', '?',
+    'apply', 'application', 'showing', 'visit', 'see', 'appointment'
+  ];
   
   const hasQuestion = questionWords.some(q => lower.includes(q));
   if (!hasQuestion) {
     return { isQuestion: false, actionCategory: null };
   }
 
-  if (lower.includes('rate') || lower.includes('monthly') || lower.includes('payment') || lower.includes('cost')) {
-    return { isQuestion: true, actionCategory: 'PAYMENT_AND_RATE_INQUIRY' };
-  }
-  if (lower.includes('tour') || lower.includes('see') || lower.includes('show') || lower.includes('visit')) {
+  // Priority 1: High Intent / Transactional / Showing / Application
+  if (
+    lower.includes('tour') ||
+    lower.includes('schedule') ||
+    lower.includes('showing') ||
+    lower.includes('visit') ||
+    lower.includes('see this') ||
+    lower.includes('show this') ||
+    lower.includes('show me') ||
+    lower.includes('appointment') ||
+    lower.includes('apply now') ||
+    lower.includes('apply for') ||
+    lower.includes('loan application') ||
+    lower.includes('mortgage application') ||
+    lower.includes('submit application') ||
+    lower.includes('take my application') ||
+    lower.includes('pull my credit') ||
+    lower.includes('credit report')
+  ) {
     return { isQuestion: true, actionCategory: 'SHOWING_REQUEST' };
   }
-  if (lower.includes('buydown') || lower.includes('credit') || lower.includes('closing')) {
+
+  // Priority 2: Buydowns, seller credits, closing costs
+  if (lower.includes('buydown') || lower.includes('seller credit') || lower.includes('closing') || lower.includes('concession')) {
     return { isQuestion: true, actionCategory: 'OFFER_STRATEGY_INQUIRY' };
   }
-  if (lower.includes('down') || lower.includes('grant') || lower.includes('qualify')) {
+
+  // Priority 3: Rates, monthly payment, cost of waiting
+  if (lower.includes('rate') || lower.includes('monthly') || lower.includes('payment') || lower.includes('cost') || lower.includes('wait')) {
+    return { isQuestion: true, actionCategory: 'PAYMENT_AND_RATE_INQUIRY' };
+  }
+
+  // Priority 4: Down payment, grants, qualification
+  if (lower.includes('down') || lower.includes('grant') || lower.includes('qualify') || lower.includes('fha') || lower.includes('usda') || lower.includes('dpa')) {
     return { isQuestion: true, actionCategory: 'ELIGIBILITY_AND_DPA' };
   }
 

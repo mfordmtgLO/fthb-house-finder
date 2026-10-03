@@ -25,8 +25,7 @@ import { detectBuyerActionItems } from '../src/server/compliance.ts';
 import { calculateCostOfWaiting, calculateMonthlyPI } from '../src/server/costOfWaiting.ts';
 import { queryCuratedListings } from '../src/server/curatedData.ts';
 
-const TEST_PORT = 3005;
-const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
+let BASE_URL = 'http://127.0.0.1:3005';
 
 interface TestResult {
   id: string;
@@ -42,11 +41,13 @@ const results: TestResult[] = [];
 async function runTests() {
   console.log('--- STARTING ARCHITECTURE TIGHTENING & RBAC ACCEPTANCE TEST SUITE ---');
 
-  // Start standalone test server instance
+  // Start standalone test server instance on dynamic available port
   const server = http.createServer(app);
   await new Promise<void>((resolve) => {
-    server.listen(TEST_PORT, '127.0.0.1', () => {
-      console.log(`Test server running on port ${TEST_PORT}`);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as { port: number };
+      BASE_URL = `http://127.0.0.1:${addr.port}`;
+      console.log(`Test server running on port ${addr.port}`);
       resolve();
     });
   });

@@ -441,7 +441,8 @@ app.post('/api/muse/chat', requireBuyerSession(getBuyerSession), async (req: Req
   }
 
   try {
-    const reply = await handleBuyerMessage(leadId, message, ip);
+    const cleanMessage = typeof message === 'string' ? message.substring(0, 1000) : message;
+    const reply = await handleBuyerMessage(leadId, cleanMessage, ip);
     res.json(reply);
   } catch (err: unknown) {
     console.error('[Muse Chat Error]', err);

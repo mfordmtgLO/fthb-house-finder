@@ -288,66 +288,75 @@ export async function addPropertyNote(params: {
 
   let aiReplyMsg: PropertyNoteMessage | null = null;
 
-  if (actionCheck.isQuestion) {
-    const isShowingOrHighIntent =
-      actionCheck.actionCategory === 'SHOWING_REQUEST' ||
-      cleanText.toLowerCase().includes('tour') ||
-      cleanText.toLowerCase().includes('schedule') ||
-      cleanText.toLowerCase().includes('see this house') ||
-      cleanText.toLowerCase().includes('apply');
+  const isShowingOrHighIntent =
+    actionCheck.actionCategory === 'SHOWING_REQUEST' ||
+    cleanText.toLowerCase().includes('tour') ||
+    cleanText.toLowerCase().includes('schedule') ||
+    cleanText.toLowerCase().includes('see this') ||
+    cleanText.toLowerCase().includes('show this') ||
+    cleanText.toLowerCase().includes('show me') ||
+    cleanText.toLowerCase().includes('showing') ||
+    cleanText.toLowerCase().includes('visit') ||
+    cleanText.toLowerCase().includes('apply now') ||
+    cleanText.toLowerCase().includes('apply for') ||
+    cleanText.toLowerCase().includes('loan application') ||
+    cleanText.toLowerCase().includes('mortgage application') ||
+    cleanText.toLowerCase().includes('submit application') ||
+    cleanText.toLowerCase().includes('take my application') ||
+    cleanText.toLowerCase().includes('pull my credit') ||
+    cleanText.toLowerCase().includes('credit report');
 
-    if (isShowingOrHighIntent) {
-      // TIER 2: Transactional / Showing Request -> NO AI Answer. Route to Mike's iPhone.
-      noteMsg.tier = 2;
-      await pushToMikeIPhone({
-        title: `Buyer Showing Request on ${thread.propertyAddress}`,
-        body: `[${noteMsg.authorName}]: ${cleanText}`,
-        leadId,
-        propertyId,
-        category: 'SHOWING_REQUEST'
-      });
-    } else {
-      // TIER 1: Educational / Informational / Strategy / Timing -> Instant Muse Grounded AI Reply
-      noteMsg.tier = 1;
-      const listings = await queryCuratedListings({ listingId: propertyId });
-      const listing = listings[0] || null;
+  if (isShowingOrHighIntent) {
+    // TIER 2: Transactional / Showing Request -> NO AI Answer. Route to Mike's iPhone.
+    noteMsg.tier = 2;
+    await pushToMikeIPhone({
+      title: `Buyer Showing Request on ${thread.propertyAddress}`,
+      body: `[${noteMsg.authorName}]: ${cleanText}`,
+      leadId,
+      propertyId,
+      category: 'SHOWING_REQUEST'
+    });
+  } else {
+    // TIER 1: Educational / Informational / Strategy / Timing -> Instant Muse Grounded AI Reply
+    noteMsg.tier = 1;
+    const listings = await queryCuratedListings({ listingId: propertyId });
+    const listing = listings[0] || null;
 
-      const museGen = await generateMuseNoteResponse({
-        noteText: cleanText,
-        listing,
-        authorName: noteMsg.authorName
-      });
+    const museGen = await generateMuseNoteResponse({
+      noteText: cleanText,
+      listing,
+      authorName: noteMsg.authorName
+    });
 
-      aiReplyMsg = {
-        id: `note-${Date.now()}-muse`,
-        sender: 'muse',
-        authorName: "Muse, Mike Ford's assistant",
-        text: museGen.text,
-        timestamp: new Date().toISOString(),
-        isQuestion: false,
+    aiReplyMsg = {
+      id: `note-${Date.now()}-muse`,
+      sender: 'muse',
+      authorName: "Muse, Mike Ford's assistant",
+      text: museGen.text,
+      timestamp: new Date().toISOString(),
+      isQuestion: false,
+      tier: 1,
+      citations: museGen.citations,
+      isAi: true
+    };
+
+    thread.messages.push(aiReplyMsg);
+
+    // Stamp audit ledger for AI reply
+    recordAuditLedger({
+      leadId,
+      actionType: 'PROPERTY_NOTE',
+      propertyId,
+      ipAddress,
+      redactedPayload: {
+        actor: 'muse',
         tier: 1,
-        citations: museGen.citations,
-        isAi: true
-      };
-
-      thread.messages.push(aiReplyMsg);
-
-      // Stamp audit ledger for AI reply
-      recordAuditLedger({
-        leadId,
-        actionType: 'PROPERTY_NOTE',
-        propertyId,
-        ipAddress,
-        redactedPayload: {
-          actor: 'muse',
-          tier: 1,
-          noteId: noteMsg.id,
-          category: actionCheck.actionCategory,
-          isCostOfWaiting: museGen.isCostOfWaiting,
-          citations: museGen.citations
-        }
-      });
-    }
+        noteId: noteMsg.id,
+        category: actionCheck.actionCategory,
+        isCostOfWaiting: museGen.isCostOfWaiting,
+        citations: museGen.citations
+      }
+    });
   }
 
   threadCache.set(thread.threadId, thread);

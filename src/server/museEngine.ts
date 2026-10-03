@@ -64,6 +64,10 @@ export const MANDATORY_SESSION_DISCLAIMER =
 // In-memory cache (transient cache only; Firestore is source of truth)
 const sessionCache = new Map<string, BuyerSessionState>();
 
+export function clearSessionStore(): void {
+  sessionCache.clear();
+}
+
 /**
  * Persists session state and messages to Firestore fthb_conversations/{leadId}
  * Every message text has PII scrub applied before write.
@@ -420,24 +424,62 @@ Respond concisely (2-3 paragraphs maximum). If appropriate, reference the curate
 
   // Deterministic Compliance Fallback if Gemini not keyed or rate limited
   if (!museReplyText) {
-    if (isTimingQuestion && costReport) {
+    const isShowingOrHighIntent =
+      actionCheck.actionCategory === 'SHOWING_REQUEST' ||
+      lowerText.includes('tour') ||
+      lowerText.includes('schedule') ||
+      lowerText.includes('see this house') ||
+      lowerText.includes('showing') ||
+      lowerText.includes('apply') ||
+      lowerText.includes('application') ||
+      lowerText.includes('credit report');
+
+    const isBuydownOrConcession =
+      actionCheck.actionCategory === 'OFFER_STRATEGY_INQUIRY' ||
+      lowerText.includes('buydown') ||
+      lowerText.includes('2-1') ||
+      lowerText.includes('seller credit') ||
+      lowerText.includes('concession') ||
+      lowerText.includes('closing cost');
+
+    const isLoanProgramOrDpa =
+      actionCheck.actionCategory === 'ELIGIBILITY_AND_DPA' ||
+      lowerText.includes('fha') ||
+      lowerText.includes('conventional') ||
+      lowerText.includes('usda') ||
+      lowerText.includes('grant') ||
+      lowerText.includes('dpa') ||
+      lowerText.includes('down payment') ||
+      lowerText.includes('qualify');
+
+    if (isShowingOrHighIntent) {
+      isEscalation = true;
+      museReplyText = `I've flagged your showing and application request directly to Mike Ford (NMLS #288455) and our local partner agent! Mike will coordinate showing access, verify home details, and follow up directly with you.`;
+      citations.push('Mike Ford Direct Escalation', 'NMLS #288455 Showing Dispatch');
+    } else if (isTimingQuestion && costReport) {
       const oneYr = costReport.intervals[1];
-      museReplyText = `You're asking a really smart question! Deciding whether to buy now or wait is one of the most common dilemmas for first-time buyers.\n\nBased on a $${costReport.targetPrice.toLocaleString()} purchase and assuming a standard 3.5% annual appreciation with $${costReport.monthlyRent.toLocaleString()}/mo rent:\n• Waiting 1 year has an estimated total cost of waiting of $${oneYr.totalCostOfWaiting.toLocaleString()}.\n• That includes ~$${oneYr.cumulativeRentPaid.toLocaleString()} paid in rent, $${oneYr.missedPrincipalEquity.toLocaleString()} in missed principal equity paydown, and a projected $${oneYr.priceIncrease.toLocaleString()} increase in property value.\n• If rates drop to ${oneYr.futureMonthlyPI.downRatePercent}%, future monthly P&I would be ~$${oneYr.futureMonthlyPI.downRate.toLocaleString()}/mo.\n\nRemember that future appreciation and rates are economic assumptions, not guarantees. Low-down payment programs often allow buyers to step into equity sooner.\n\nWant Mike Ford (NMLS #288455) to review your personal scenario?`;
+      museReplyText = `You're asking a really smart question! Deciding whether to buy now or wait is one of the most common dilemmas for first-time buyers.\n\nBased on a $${costReport.targetPrice.toLocaleString()} purchase and assuming a standard 3.5% annual appreciation with $${costReport.monthlyRent.toLocaleString()}/mo rent:\n• Waiting 1 year has an estimated total cost of waiting of $${oneYr.totalCostOfWaiting.toLocaleString()}.\n• That includes ~$${oneYr.cumulativeRentPaid.toLocaleString()} paid in non-recoverable rent, $${oneYr.missedPrincipalEquity.toLocaleString()} in missed principal equity paydown, and a projected $${oneYr.priceIncrease.toLocaleString()} increase in property value.\n• If rates drop to ${oneYr.futureMonthlyPI.downRatePercent}%, future monthly P&I would be ~$${oneYr.futureMonthlyPI.downRate.toLocaleString()}/mo.\n\nRemember that future appreciation and rates are economic assumptions, not guarantees. First-time buyers likely qualify for low-down-payment programs that allow stepping into homeownership sooner.\n\nWant Mike Ford (NMLS #288455) to review your personal scenario or give you a quick call?`;
       citations.push('Deterministic Cost-of-Waiting Calculator (MortgageLab Algorithm)');
+    } else if (isBuydownOrConcession) {
+      museReplyText = `A 2-1 temporary buydown is one of our favorite first-time buyer tools! With a 2-1 buydown, the seller funds a credit at closing to lower your mortgage interest rate by 2% in your first year and 1% in your second year, giving you substantial monthly payment breathing room.\n\nBuyers likely qualify at the standard note rate, and negotiating seller credits toward closing costs can dramatically reduce your upfront cash to close.\n\nWant Mike Ford (NMLS #288455) to review your personal scenario or see if a home qualifies for seller credits?`;
+      citations.push('2-1 Buydown Underwriting Guidelines', 'NMLS #288455 Strategy');
+    } else if (isLoanProgramOrDpa) {
+      museReplyText = `First-time buyers in the Pacific Northwest likely qualify for several low and zero down payment options, including FHA financing with 3.5% down, Conventional first-time buyer programs with 3% down, USDA 0% down in eligible rural boundaries, and local down payment assistance grants.\n\nWant Mike Ford (NMLS #288455) to review your personal scenario or check eligibility for state grant programs?`;
+      citations.push('FTHB Purchase Programs', 'CFPB Reg Z Qualified Guidelines');
     } else if (isComplexMathOrQuote) {
       isEscalation = true;
-      museReplyText = `That's a great question about the specific numbers. Because mortgage guidelines, local taxes, insurance escrows, and credit tiers affect your exact bottom line, let's check in with Mike for more details!\n\nMike can run the exact scenario with zero obligation and explore whether a 2-1 temporary buydown or down payment assistance grant fits your household budget. In the meantime, take a look at the curated homes below that match our low-down payment filters.`;
+      museReplyText = `That's a great question about the specific numbers. Because mortgage guidelines, local property taxes, insurance escrows, and credit tiers affect your exact bottom line, let's check in with Mike Ford (NMLS #288455) for more details!\n\nMike can run the exact scenario with zero obligation and explore whether a 2-1 temporary buydown or down payment assistance grant fits your household budget.`;
       citations.push('Mike Ford Loan Officer Consultation Rule', 'CFPB Reg Z');
     } else if (!session.statedPreferences.city) {
-      museReplyText = `Stopping renting is totally doable, even if you don't have tens of thousands saved. Many first-time buyers use FHA (3.5% down), Conventional HomeReady (3% down), or USDA/VA (0% down).\n\nWhat Pacific Northwest cities or neighborhoods are you most interested in exploring? (e.g. Portland, Gresham, Beaverton, Hillsboro, Oregon City, or Vancouver)`;
+      museReplyText = `Stopping renting is totally doable, even if you don't have tens of thousands saved! First-time buyers likely qualify for low-down programs like FHA (3.5% down), Conventional (3% down), or USDA (0% down).\n\nWhat Pacific Northwest cities or neighborhoods are you most interested in exploring? (e.g. Portland, Beaverton, Hillsboro, Gresham, Eugene, Springfield, or Vancouver)\n\nWant Mike Ford (NMLS #288455) to review your personal scenario anytime?`;
+      citations.push('NMLS #288455 FTHB Guidance');
     } else if (!session.statedPreferences.maxMonthlyPayment) {
-      museReplyText = `Awesome! I've marked **${session.statedPreferences.city}** as your preferred focus.\n\nWhat is your comfortable target monthly mortgage payment? For example, if you're currently paying $2,200 in rent, would you prefer to stay around that, or do you have a ceiling like $2,500 to $2,800/mo?`;
+      museReplyText = `Awesome! I've marked **${session.statedPreferences.city}** as your preferred focus.\n\nWhat is your comfortable target monthly mortgage payment? For example, if you're currently paying $2,200 in rent, would you prefer to stay around that, or do you have a ceiling like $2,500 to $2,800/mo? Buyers likely qualify for seller credits to ease payments.\n\nWant Mike Ford (NMLS #288455) to review your target monthly budget?`;
+      citations.push('NMLS #288455 Payment Planning');
     } else {
-      if (platter.length > 0) {
-        museReplyText = `Here is a curated platter of single-family homes in **${session.statedPreferences.city}** that likely qualify for our low-down and 0% down programs! Notice how homes with 2-1 buydowns can knock hundreds off your monthly payment during the first two years.\n\nHeart up to 3 favorites, and if you want to see any of these in person, let's ping Mike to connect you with our vetted local real estate partner for a private tour.`;
-      } else {
-        museReplyText = `I've noted your preferences for **${session.statedPreferences.city}**. We don't have active curated single-family homes loaded from Firestore matching this exact filter right now. Let's check in with Mike to review new inventory coming through the pipeline or adjust your target parameters!`;
-      }
+      isEscalation = true;
+      museReplyText = `I specialize in Pacific Northwest first-time homebuyer financing, low down payment programs, and seller credit strategies! For custom mortgage rate quotes, specific underwriting requirements, or property tour coordination, let's check in with Mike Ford (NMLS #288455) for more details.`;
+      citations.push('NMLS #288455 Advisory Standard');
     }
   }
 
