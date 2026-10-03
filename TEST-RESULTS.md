@@ -1,8 +1,8 @@
 # FTHB House Finder — Architecture Tightening Acceptance Test Report
 
-**Execution Date:** 2026-10-03T05:45:57.972Z
+**Execution Date:** 2026-10-03T06:01:40.824Z
 **System Owner:** Mike Ford, NMLS #288455 (`fordmj@gmail.com`)
-**Summary:** 35 / 35 Tests Passed (0 Failed)
+**Summary:** 40 / 40 Tests Passed (0 Failed)
 
 | Test ID | Test Name | Group | Status | Details | Compliance Evidence |
 |---|---|---|---|---|---|
@@ -10,7 +10,7 @@
 | **S2** | 1-Click Revocation is immediate (next request 401) | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Before: HTTP 200, Revoked: HTTP 200, After: HTTP 401 (STAFF_REVOKED). | Immediate server-side cache invalidation and fail-closed 401 enforcement. |
 | **S3** | Unknown email credentials fail closed with HTTP 401 | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Unknown email blocked on /api/mike/inbox (401) and /api/lo/audit-ledger (401). | Fail-closed authentication: unknown identities have zero staff permissions. |
 | **S4** | Empty roster / unconfigured state fails closed | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Roster lookup returns null on missing doc and unconfigured env; all staff endpoints return 401. | Fail-closed system constitution enforced. |
-| **S5** | Every roster mutation has matching audit ledger entry | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Verified UPSERT_STAFF_ROSTER audit entry stamped with actor: fordmj@gmail.com, target: officer.audit.1791006349770@vantage.internal. | GLBA & enterprise compliance ledger stamps every roster mutation. |
+| **S5** | Every roster mutation has matching audit ledger entry | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Verified UPSERT_STAFF_ROSTER audit entry stamped with actor: fordmj@gmail.com, target: officer.audit.1791007290345@vantage.internal. | GLBA & enterprise compliance ledger stamps every roster mutation. |
 | **S6** | Grep verifies zero hardcoded staff test emails in src/server/rbac.ts | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Deleted hardcoded Map. Zero synthetic email literals in production rbac.ts or src/. | Production code starts with Mike only; test identities isolated to test suite. |
 | **S7** | Automated test suite executes against Firestore staff_roster | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | All role checks (Master Admin, Branch Manager, Loan Officer, Auditor) resolved via staff_roster. | 100% dynamic Firestore RBAC operation. |
 | **A1** | Buyer reads own favorites | GROUP A: BUYER ISOLATION | **PASS** | Status 200. Received favorites: ["beaverton-004"] | Response isolated strictly to test-lead-rbac-001; no audit ledger pollution on self-read. |
@@ -18,7 +18,7 @@
 | **A3** | Buyer attempts another buyer's conversation thread | GROUP A: BUYER ISOLATION | **PASS** | Cross-buyer thread read blocked with HTTP 403. | No conversation content leaked in 403 error response. |
 | **A4** | Unauthenticated requests fail closed | GROUP A: BUYER ISOLATION | **PASS** | Protected endpoints returned 401 FAIL_CLOSED_AUTH_REQUIRED. | Fail-closed authentication enforced across all protected endpoints. |
 | **A5** | Public listing catalog reads without auth | GROUP A: BUYER ISOLATION | **PASS** | Public listings endpoint returned HTTP 200 with totalCount: 6. | Rate-limited public catalog served verbatim; zero buyer PII present. |
-| **B1** | Mike Ford Admin reads LO inbox | GROUP B: ROLE ENFORCEMENT | **PASS** | Master Admin accessed 14 conversation threads with HTTP 200. | GLBA compliance audit ledger stamped for every conversation thread accessed. |
+| **B1** | Mike Ford Admin reads LO inbox | GROUP B: ROLE ENFORCEMENT | **PASS** | Master Admin accessed 20 conversation threads with HTTP 200. | GLBA compliance audit ledger stamped for every conversation thread accessed. |
 | **B2** | Loan Officer reads assigned lead's conversation | GROUP B: ROLE ENFORCEMENT | **PASS** | Assigned Loan Officer accessed lead test-lead-rbac-001 with HTTP 200. | Ledger stamped with actor: lo.sarah@vantage.internal, role: loan_officer, outcome: ALLOWED. |
 | **B3** | Loan Officer attempts unassigned lead's conversation | GROUP B: ROLE ENFORCEMENT | **PASS** | Unassigned lead access blocked with HTTP 403 (UNASSIGNED_LEAD_ACCESS_DENIED). | Denial stamped in compliance_audit_ledger with outcome: DENIED; no data leak. |
 | **B4** | Branch Manager branch scoping | GROUP B: ROLE ENFORCEMENT | **PASS** | Branch manager received 1 lead(s) strictly scoped to Springfield. Eugene leads excluded. | Cross-branch data filtered out before response serialization; query stamped to ledger. |
@@ -36,11 +36,16 @@
 | **C6b** | Staff-gated push notification with malicious input gets sanitized server-side | GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2) | **PASS** | Sanitized count: 1, body: "Mike Ford curated 1 homes for you in alert('xss')Portland [REDACTED_SSN].". Markup and SSN stripped cleanly. | Server-side input sanitization enforces positive integer and markup-free strings. |
 | **C6** | Authorized staff triggers push notification dispatch | GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2) | **PASS** | Notification payload generated: "Mike Ford curated 3 homes for you in Beaverton.". Status: PENDING_DEVICE_REGISTRATION. | Notification scoped strictly to target buyer; FCM token path verified. |
 | **C7** | Grep suite verifies zero fabricated listings or placeholder patterns | GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2) | **PASS** | Scanned codebase for STARTER_CURATED_LISTINGS, SEED_LISTINGS, unsplash, 555 phone patterns. Zero occurrences found. | Full codebase verified clean of all fabricated listing fallbacks. |
-| **CR1** | Ledger completeness across all staff interactions | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Verified 50 immutable compliance audit records generated. | Sample Ledger IDs: audit-staff-1791006354130-zqpt882, audit-staff-1791006355995-huyfxqk, audit-staff-1791006356072-k5dlvuw, audit-staff-1791006356220-mb79olg, audit-staff-1791006356367-hekh6nc |
+| **CR1** | Ledger completeness across all staff interactions | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Verified 64 immutable compliance audit records generated. | Sample Ledger IDs: audit-1791007296431-appcz2t, audit-staff-1791007297392-437pq5f, audit-staff-1791007297471-0whyl8i, audit-staff-1791007297623-z4hcdqu, audit-staff-1791007297794-wwm0q2i |
 | **CR2** | Zero PII / SSN / Financial card patterns in API responses | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Scanned staff payloads for SSN and financial card regex patterns. Zero detections. | Zero-trust PII sanitization and role-scoped masking verified intact. |
 | **CR3** | Once-per-session disclaimer intact | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Mandatory session disclaimer verified firing on initial session creation. | Disclaimer logged to compliance audit ledger with NMLS #288455 citations. |
 | **CR4** | Qualified "Likely Qualifies" phrasing on all eligibility surfaces | GROUP CR: COMPLIANCE REGRESSION | **PASS** | All listing loan overlays verified adhering strictly to qualified language (zero guarantee claims). | CFPB Regulation Z 12 CFR § 1026.24 compliant. |
 | **CR5** | Fail-closed behavior on missing or unconfigured resources | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Non-existent or unconfigured paths return 404/503 without crashing or failing open. | Server-side fail-closed guards verified active. |
+| **F1** | Network timeout / unreachable server triggers user-visible error without wedging UI | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Timeout safely caught within window. Error message: "Couldn't connect to server in time — check your connection and try again.". Modal remains interactive. | 15-second AbortController timeout protects UI responsiveness on mobile and spotty cellular networks. |
+| **F2** | Property note submission renders feedback and persists note message | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Note ID: note-1791007300340-v05at, question auto-detected: true, action category: OFFER_STRATEGY_INQUIRY. | Two-way note conversation payload returned with question routing to LO device. |
+| **F3** | Property note survives backend restart (Firestore property_threads persistence) | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Verified thread retrieved from Firestore collection property_threads after memory cache clear. Total messages: 3. | Server-side Admin SDK persistence to property_threads/{threadId} verified. |
+| **F4** | Dismissing modal mid-submit aborts request without unmounted state errors | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | AbortController cleanly terminated in-flight fetch on modal dismiss. Zero unhandled promise rejections. | Defensive UI lifecycle guard active across modal interactions. |
+| **F5** | Zero-trust PII sanitization and TCPA opt-in audit ledger stamping on property notes | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | SSN & card patterns scrubbed prior to persistence. TCPA consent stamped into compliance audit ledger. | GLBA 15 U.S.C. § 6801 and TCPA 47 U.S.C. § 227 compliance verified. |
 
 ## Follow-Up 1 — Staff Roster Architecture Evidence
 - **Firestore Collection:** `staff_roster/{emailId}` with TTL cache (~60s) and cache invalidation on roster mutation.
@@ -54,9 +59,16 @@
 - **Identity Resolution:** Email-link normalization and linking without duplicate record creation.
 - **Push Notification:** Real push payload generated with correct count and city: `"Mike Ford curated N homes for you in <city>."`.
 
+## Property Notes Freeze Fix & Persistence Evidence (F1–F5)
+- **15-Second Abort Timeout:** `fetchWithTimeout` in `src/api.ts` enforces a strict 15s timeout on all network requests via AbortController.
+- **Inline User Feedback:** `PropertyNotesModal` displays an inline error banner with a Retry affordance on timeout or network error (never console-only).
+- **Interactive Modal Dismissal:** Modal X button and backdrop click remain fully dismissible mid-submit, immediately aborting the in-flight request.
+- **Firestore Persistence:** Property threads persist to Firestore collection `property_threads/{threadId}`, surviving backend restarts.
+- **Button States:** Displays a spinning loader and "Posting…" label during submission, disabling double-submissions.
+
 ## Audit Trail Proof (GLBA Telemetry & Ledger Sample)
-- **Total Compliance Audit Entries Recorded:** 50
-- **Sample Audit Ledger IDs:** `audit-staff-1791006354130-zqpt882`, `audit-staff-1791006355995-huyfxqk`, `audit-staff-1791006356072-k5dlvuw`, `audit-staff-1791006356220-mb79olg`, `audit-staff-1791006356367-hekh6nc`
+- **Total Compliance Audit Entries Recorded:** 64
+- **Sample Audit Ledger IDs:** `audit-1791007296431-appcz2t`, `audit-staff-1791007297392-437pq5f`, `audit-staff-1791007297471-0whyl8i`, `audit-staff-1791007297623-z4hcdqu`, `audit-staff-1791007297794-wwm0q2i`
 
 ## PII Redaction Verification (Group CR2 Grep Suite)
 - **SSN Patterns Detected (`\b\d{3}-\d{2}-\d{4}\b`):** 0

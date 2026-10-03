@@ -44,7 +44,7 @@ import {
   rateLimitLeads,
   rateLimitSensitive
 } from './src/server/rateLimiter.ts';
-import { sanitizePiiInput } from './src/server/compliance.ts';
+import { sanitizePiiInput, getAuditLedger } from './src/server/compliance.ts';
 import { getMikeDeviceTokens } from './src/server/deviceTokens.ts';
 
 dotenv.config();
@@ -671,7 +671,7 @@ app.post('/api/mike/reply', requireStaffRole('master_admin', 'admin', 'loan_offi
 
   let resultMsg: any;
   if (propertyId) {
-    resultMsg = addMikePropertyReply(propertyId, leadId, text);
+    resultMsg = await addMikePropertyReply(propertyId, leadId, text);
   } else {
     resultMsg = await handleMikeReply(leadId, text);
   }
@@ -704,10 +704,23 @@ app.get('/api/lo/audit-ledger', requireStaffRole('master_admin', 'auditor'), asy
     outcome: 'ALLOWED'
   });
 
-  const ledger = getComplianceAuditLedger();
+  const staffLedger = getComplianceAuditLedger();
+  const buyerLedger = getAuditLedger().map(b => ({
+    id: b.id,
+    timestamp: b.timestamp,
+    actor: b.leadId,
+    role: 'loan_officer' as const,
+    action: b.actionType,
+    targetLeadId: b.leadId,
+    outcome: 'ALLOWED' as const,
+    metadata: b.redactedPayload
+  }));
+
+  const allLedger = [...staffLedger, ...buyerLedger].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
   res.json({
-    totalCount: ledger.length,
-    entries: ledger
+    totalCount: allLedger.length,
+    entries: allLedger
   });
 });
 

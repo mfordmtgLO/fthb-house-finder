@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Send,
@@ -12,7 +12,8 @@ import {
   Mail,
   Building2,
   AlertCircle,
-  UserCheck
+  UserCheck,
+  RefreshCw
 } from 'lucide-react';
 import { CuratedListing, PropertyThread, PropertyNoteMessage } from '../types';
 import { fetchPropertyThread, postPropertyNote } from '../api';
@@ -34,52 +35,115 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
   const [tcpaAccepted, setTcpaAccepted] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const handleDismiss = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    onClose();
+  };
 
   useEffect(() => {
     if (!listing || !leadId) return;
     setLoading(true);
-    fetchPropertyThread(listing.id, leadId)
-      .then(res => setThread(res))
-      .catch(err => console.error('Failed to load thread:', err))
-      .finally(() => setLoading(false));
+    setErrorMessage(null);
+
+    const controller = new AbortController();
+    fetchPropertyThread(listing.id, leadId, controller.signal)
+      .then(res => {
+        if (isMountedRef.current) {
+          setThread(res);
+        }
+      })
+      .catch(err => {
+        if (err?.name !== 'AbortError' && isMountedRef.current) {
+          console.warn('Failed to load thread:', err);
+        }
+      })
+      .finally(() => {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      });
+
+    return () => controller.abort();
   }, [listing, leadId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!listing || !leadId || !noteText.trim() || submitting) return;
 
     setSubmitting(true);
+    setErrorMessage(null);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const res = await postPropertyNote({
         propertyId: listing.id,
         leadId,
         authorName,
         text: noteText.trim(),
-        tcpaAccepted
+        tcpaAccepted,
+        signal: controller.signal
       });
 
-      if (res.note) {
-        setThread(prev => {
-          if (!prev) return null;
-          return {
-            ...prev,
-            messages: [...prev.messages, res.note]
-          };
-        });
+      if (isMountedRef.current) {
+        if (res.note) {
+          setThread(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              messages: [...prev.messages, res.note]
+            };
+          });
+        }
+        setNoteText('');
+        setErrorMessage(null);
       }
-      setNoteText('');
-    } catch (err) {
-      console.error('Note submission error:', err);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        // Ignored on purposeful dismiss
+        return;
+      }
+      if (isMountedRef.current) {
+        console.warn('Note submission error:', err);
+        setErrorMessage(err?.message || "Couldn't post your note — check your connection and try again.");
+      }
     } finally {
-      setSubmitting(false);
+      if (isMountedRef.current) {
+        setSubmitting(false);
+        abortControllerRef.current = null;
+      }
     }
   };
 
   if (!listing) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4"
+      onClick={handleDismiss}
+    >
+      <div
+        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
         <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
@@ -96,8 +160,9 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+            onClick={handleDismiss}
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+            title="Close Notes Modal (Esc)"
           >
             <X className="w-5 h-5" />
           </button>
@@ -106,7 +171,10 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
         {/* Notes Thread Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {loading ? (
-            <div className="text-center py-8 text-xs text-slate-400">Loading conversation history...</div>
+            <div className="text-center py-8 text-xs text-slate-400 flex items-center justify-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+              <span>Loading conversation history...</span>
+            </div>
           ) : thread && thread.messages.length > 0 ? (
             thread.messages.map(msg => (
               <div
@@ -147,7 +215,7 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
             </div>
           )}
 
-          {/* Co-Branded LO + Agent Profile Cards (Mandatory F4 Pattern) */}
+          {/* Co-Branded LO + Agent Profile Cards */}
           <div className="mt-6 pt-4 border-t border-slate-800 space-y-3">
             <div className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-cyan-400" />
@@ -226,13 +294,33 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
           </div>
         </div>
 
+        {/* Inline Error Banner */}
+        {errorMessage && (
+          <div className="px-4 py-2.5 bg-rose-950/80 border-t border-b border-rose-800/80 flex items-center justify-between gap-2 text-xs text-rose-200 animate-fadeIn">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSubmit()}
+              className="px-2.5 py-1 bg-rose-800 hover:bg-rose-700 text-white rounded-lg text-[11px] font-semibold flex-shrink-0 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Input Form & TCPA Consent */}
         <form onSubmit={handleSubmit} className="p-4 bg-slate-950 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center space-x-2">
             <input
               type="text"
               value={authorName}
-              onChange={(e) => setAuthorName(e.target.value)}
+              onChange={(e) => {
+                setAuthorName(e.target.value);
+                if (errorMessage) setErrorMessage(null);
+              }}
               placeholder="Your Name (e.g. Alex M.)"
               className="w-40 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500"
             />
@@ -243,17 +331,29 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
             <input
               type="text"
               value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
+              onChange={(e) => {
+                setNoteText(e.target.value);
+                if (errorMessage) setErrorMessage(null);
+              }}
               placeholder="Type your question (e.g. 'Can we negotiate a 2-1 buydown here?')"
               className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
             />
             <button
               type="submit"
               disabled={!noteText.trim() || submitting}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md"
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-95"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>Post Note</span>
+              {submitting ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Posting…</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Post Note</span>
+                </>
+              )}
             </button>
           </div>
 

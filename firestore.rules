@@ -77,5 +77,10 @@ service cloud.firestore {
     match /device_tokens/{leadId} {
       allow read, write: if false;
     }
+
+    // Property Notes & Two-Way Threads: Server-side Admin SDK read & write only (deny direct client access)
+    match /property_threads/{threadId} {
+      allow read, write: if false;
+    }
   }
 }
