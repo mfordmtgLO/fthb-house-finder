@@ -285,23 +285,55 @@ export default function App() {
                     </button>
                   </div>
                 ) : listings.length === 0 ? (
-                  /* Honest Empty State */
-                  <div className="text-center py-20 px-4 bg-slate-900/50 border border-dashed border-slate-800 rounded-2xl max-w-md mx-auto">
-                    <Home className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                    <h3 className="text-base font-bold text-slate-300">No homes match this specific filter</h3>
-                    <p className="text-xs text-slate-500 mt-1 mb-4">
-                      Try clearing the city or price filter to browse all Pacific Northwest curated single-family homes.
-                    </p>
-                    <button
-                      onClick={() => {
-                        setSelectedCity('');
-                        setSelectedProgram('');
-                        setMaxMonthlyPayment('');
-                      }}
-                      className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold shadow-md"
-                    >
-                      Reset All Filters
-                    </button>
+                  /* Honest Empty State - Prompt 1 Compliant */
+                  <div className="text-center py-16 px-6 bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl max-w-lg mx-auto space-y-4">
+                    <div className="w-12 h-12 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center mx-auto text-slate-400">
+                      <Home className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-200">
+                        {selectedCity || selectedProgram || maxMonthlyPayment
+                          ? 'No homes match your current filter'
+                          : 'No curated homes currently available'}
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                        {selectedCity || selectedProgram || maxMonthlyPayment
+                          ? 'Try resetting your filters, or request custom curation for your target area from Mike Ford.'
+                          : 'Our candidate pool is refreshed regularly with verified low/no-down payment qualifying single-family homes.'}
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl text-left space-y-1.5">
+                      <div className="flex items-center space-x-2 text-cyan-400 font-semibold text-xs">
+                        <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                        <span>Request Custom Curation with Mike Ford</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-snug">
+                        Contact <strong className="text-slate-200">Mike Ford, Loan Officer | NMLS #288455</strong> to curate a personalized list of 0% down USDA, 3.5% FHA, or down payment assistance homes for your family.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-3 pt-1">
+                      {(selectedCity || selectedProgram || maxMonthlyPayment) && (
+                        <button
+                          onClick={() => {
+                            setSelectedCity('');
+                            setSelectedProgram('');
+                            setMaxMonthlyPayment('');
+                          }}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-colors"
+                        >
+                          Reset Filters
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setIsSidebarOpen(true)}
+                        className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md flex items-center gap-1.5"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Ask Muse to Request Curation</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   /* Curated Cards Grid / Carousel */

@@ -11,6 +11,7 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
+import { getAdminFirestore } from './src/server/firebaseAdmin.ts';
 import {
   getOrCreateBuyerSession,
   getBuyerSession,
@@ -139,8 +140,17 @@ app.post('/api/auth/session', async (req: Request, res: Response): Promise<void>
 });
 
 // 2. Curated Listings Endpoint (Publicly browsable catalog for buyers & map)
-// ARCHITECTURE LAW: Serves verbatim curated listings from Firestore.
+// ARCHITECTURE LAW: Serves verbatim curated listings from Firestore. Fail closed if unconfigured.
 app.get('/api/listings', async (req: Request, res: Response): Promise<void> => {
+  const db = getAdminFirestore();
+  if (!db) {
+    res.status(503).json({
+      error: 'Service Unavailable: Firestore backend configuration missing or unreachable.',
+      code: 'FIRESTORE_UNAVAILABLE'
+    });
+    return;
+  }
+
   const { city, maxPrice, maxMonthlyPayment, program, listingId, favorites } = req.query;
 
   const parsedMaxPrice = maxPrice ? parseFloat(maxPrice as string) : undefined;
@@ -168,6 +178,15 @@ app.get('/api/listings', async (req: Request, res: Response): Promise<void> => {
 
 // 3. Single Listing Verbatim
 app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> => {
+  const db = getAdminFirestore();
+  if (!db) {
+    res.status(503).json({
+      error: 'Service Unavailable: Firestore backend configuration missing or unreachable.',
+      code: 'FIRESTORE_UNAVAILABLE'
+    });
+    return;
+  }
+
   const listings = await queryCuratedListings({ listingId: req.params.id });
   const listing = listings[0];
   if (!listing) {
@@ -175,6 +194,61 @@ app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> 
     return;
   }
   res.json(listing);
+});
+
+// 3b. Per-Lead Curations Endpoint (Reads lead_curations/{leadId} cross-project)
+app.get('/api/buyer/curations/:leadId', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+  const db = getAdminFirestore();
+  if (!db) {
+    res.status(503).json({
+      error: 'Service Unavailable: Firestore backend configuration missing or unreachable.',
+      code: 'FIRESTORE_UNAVAILABLE'
+    });
+    return;
+  }
+
+  const { leadId } = req.params;
+  try {
+    const docSnap = await db.collection('lead_curations').doc(leadId).get();
+    if (!docSnap.exists) {
+      res.json({
+        leadId,
+        hasCurations: false,
+        listings: [],
+        status: 'none',
+        message: 'No personal curations married to this lead yet.'
+      });
+      return;
+    }
+
+    const curationData = docSnap.data() || {};
+    const marriedListings = Array.isArray(curationData.listings) ? curationData.listings : [];
+    const listingIds = marriedListings
+      .map((item: any) => (typeof item === 'string' ? item : item.listingId))
+      .filter(Boolean);
+
+    // Fetch verbatim listing details
+    const fullListings = [];
+    for (const id of listingIds) {
+      const listingSnap = await db.collection('curated_listings').doc(id).get();
+      if (listingSnap.exists) {
+        fullListings.push({ id: listingSnap.id, ...listingSnap.data() });
+      }
+    }
+
+    res.json({
+      leadId,
+      hasCurations: true,
+      status: curationData.status || 'ready',
+      curatedBy: curationData.curatedBy || 'mike.ford',
+      pushedAt: curationData.pushedAt || null,
+      buyerNote: curationData.buyerNote || null,
+      listings: fullListings
+    });
+  } catch (err: any) {
+    console.error('[Lead Curations Read Error]', err.message);
+    res.status(500).json({ error: 'Failed to read buyer curations' });
+  }
 });
 
 // 4. Muse AI Chat (Tier 4 Rate Limit: 60 sensitive ops / 15 min)
