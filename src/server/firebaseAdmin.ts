@@ -60,6 +60,7 @@ export function getAdminFirestore(): Firestore | null {
 
     // Connect strictly to the named database in the homebuyer project
     firestoreDb = getFirestore(adminApp, HOMEBUYER_DATABASE_ID);
+    firestoreDb.settings({ ignoreUndefinedProperties: true });
     console.log(
       `[Firebase Admin] Successfully initialized Firestore connection to homebuyer project (${serviceAccount.project_id}), database ID: ${HOMEBUYER_DATABASE_ID}`
     );

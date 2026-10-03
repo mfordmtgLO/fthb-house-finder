@@ -16,7 +16,7 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
 }) => {
   const [activeTab, setActiveTab] = useState<'reply' | 'inbox'>('reply');
   const [selectedLeadId, setSelectedLeadId] = useState(initialLeadId);
-  const [apiKey, setApiKey] = useState('');
+  const [staffEmail, setStaffEmail] = useState('fordmj@gmail.com');
   const [replyText, setReplyText] = useState(
     "Hey! Mike Ford here (NMLS #288455). I saw your note on this home. We can definitely look into a 2-1 buydown to knock your first year payment down. When are you free for a 5-minute call?"
   );
@@ -31,14 +31,14 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
   const [inboxError, setInboxError] = useState<string | null>(null);
 
   const loadInbox = async () => {
-    if (!apiKey.trim()) {
-      setInboxError('Enter MUSE_API_KEY below to load Firestore conversation inbox');
+    if (!staffEmail.trim()) {
+      setInboxError('Select or enter an authorized staff email/token');
       return;
     }
     setLoadingInbox(true);
     setInboxError(null);
     try {
-      const data = await fetchMikeInbox(apiKey.trim());
+      const data = await fetchMikeInbox(staffEmail.trim());
       setInboxList(data.conversations || []);
     } catch (err: any) {
       setInboxError(err.message || 'Failed to fetch conversations from Firestore');
@@ -48,10 +48,10 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
   };
 
   useEffect(() => {
-    if (activeTab === 'inbox' && apiKey.trim()) {
+    if (activeTab === 'inbox') {
       loadInbox();
     }
-  }, [activeTab]);
+  }, [activeTab, staffEmail]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +65,7 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
         leadId: selectedLeadId,
         propertyId: targetChannel === 'note' && propertyId ? propertyId : undefined,
         text: replyText.trim(),
-        apiKey
+        token: staffEmail.trim()
       });
 
       setStatus('Reply persisted to fthb_conversations and dispatched!');
@@ -76,7 +76,7 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
         }
       }, 1200);
     } catch (err: any) {
-      setStatus(`Error: ${err.message || 'Unauthorized API Key'}`);
+      setStatus(`Error: ${err.message || 'Unauthorized Staff Role'}`);
     } finally {
       setSubmitting(false);
     }
@@ -171,28 +171,61 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
                 </button>
               </div>
 
-              {!apiKey && (
-                <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-xl space-y-1.5">
-                  <label className="block text-slate-300 text-[11px] font-medium">
-                    Enter LO Secret Key to Unlock Inbox:
+              {/* Staff Role Selector */}
+              <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 text-[11px] font-medium">
+                    Select Staff Role / ID Token:
                   </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="Paste MUSE_API_KEY from env"
-                      className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono"
-                    />
-                    <button
-                      onClick={loadInbox}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs"
-                    >
-                      Load
-                    </button>
-                  </div>
+                  <span className="text-[10px] text-amber-400 font-mono">RBAC Active</span>
                 </div>
-              )}
+                <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setStaffEmail('fordmj@gmail.com')}
+                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
+                      staffEmail === 'fordmj@gmail.com'
+                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    👑 Mike Ford (Master Admin)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStaffEmail('lo.sarah@vantage.internal')}
+                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
+                      staffEmail === 'lo.sarah@vantage.internal'
+                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    📋 Sarah (Loan Officer)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStaffEmail('bm.springfield@vantage.internal')}
+                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
+                      staffEmail === 'bm.springfield@vantage.internal'
+                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    🏢 Branch Mgr (Springfield)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStaffEmail('auditor@fthb-compliance.internal')}
+                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
+                      staffEmail === 'auditor@fthb-compliance.internal'
+                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    🔍 Auditor (Read-Only)
+                  </button>
+                </div>
+              </div>
 
               {inboxError && (
                 <div className="p-2.5 rounded-lg text-xs bg-rose-950/50 text-rose-300 border border-rose-800">
@@ -332,14 +365,14 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
 
               <div>
                 <label className="block text-slate-400 text-[11px] font-medium mb-1">
-                  LO Secret Key (from env):
+                  Staff Role / Verified ID Token:
                 </label>
                 <input
                   type="text"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Paste MUSE_API_KEY from env"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-300 font-mono"
+                  value={staffEmail}
+                  onChange={(e) => setStaffEmail(e.target.value)}
+                  placeholder="Enter staff email or ID token"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-amber-300 font-mono"
                 />
               </div>
 

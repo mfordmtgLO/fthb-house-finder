@@ -3,10 +3,11 @@ import React, { useState, useEffect } from 'react';
 import {
   initBuyerSession,
   fetchCuratedListings,
+  fetchBuyerCurations,
   updateFavoritesServer,
   getLocalLeadId
 } from './api';
-import { CuratedListing } from './types';
+import { CuratedListing, BuyerCurationsResponse } from './types';
 import { Header } from './components/Header';
 import { FavoritesRail } from './components/FavoritesRail';
 import { MuseSidebar } from './components/MuseSidebar';
@@ -20,6 +21,7 @@ import { PreApprovalModal } from './components/PreApprovalModal';
 import { PwaInstallGuideModal } from './components/PwaInstallGuideModal';
 import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
 import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
+import { IdentifyModal } from './components/IdentifyModal';
 import {
   Home,
   ShieldCheck,
@@ -30,13 +32,19 @@ import {
   Info,
   Layers,
   ArrowRight,
-  MapPin
+  MapPin,
+  Star,
+  UserCheck,
+  Mail
 } from 'lucide-react';
 
 export default function App() {
   const [leadId, setLeadId] = useState<string>('');
+  const [buyerEmail, setBuyerEmail] = useState<string>('');
   const [disclaimerServed, setDisclaimerServed] = useState<boolean>(false);
   const [listings, setListings] = useState<CuratedListing[]>([]);
+  const [curationsData, setCurationsData] = useState<BuyerCurationsResponse | null>(null);
+  const [curationScope, setCurationScope] = useState<'all' | 'my-curations'>('all');
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +76,7 @@ export default function App() {
   const [isInstallGuideOpen, setIsInstallGuideOpen] = useState<boolean>(false);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [isUsdaAdjusterOpen, setIsUsdaAdjusterOpen] = useState<boolean>(false);
+  const [isIdentifyOpen, setIsIdentifyOpen] = useState<boolean>(false);
 
   // Deep-linking map state
   const [deepLinkedListingId, setDeepLinkedListingId] = useState<string | null>(null);
@@ -92,30 +101,63 @@ export default function App() {
       });
   }, []);
 
-  // 2. Fetch Curated Listings when filters change
+  // 2. Fetch Buyer Personal Curations from GET /api/buyer/curations/:leadId
+  const loadBuyerCurations = (id: string) => {
+    if (!id) return;
+    fetchBuyerCurations(id)
+      .then(res => {
+        setCurationsData(res);
+      })
+      .catch(err => {
+        console.warn('Personal curations check:', err.message);
+      });
+  };
+
+  useEffect(() => {
+    if (leadId) {
+      loadBuyerCurations(leadId);
+    }
+  }, [leadId]);
+
+  // 3. Fetch Curated Listings when filters or scope change
   useEffect(() => {
     if (!leadId) return;
 
     setLoading(true);
     setError(null);
 
-    fetchCuratedListings({
-      city: selectedCity || undefined,
-      program: selectedProgram && selectedProgram !== 'All Programs' ? selectedProgram : undefined,
-      maxMonthlyPayment: typeof maxMonthlyPayment === 'number' ? maxMonthlyPayment : undefined,
-      leadId
-    })
-      .then(data => {
-        setListings(data);
+    if (curationScope === 'my-curations') {
+      fetchBuyerCurations(leadId)
+        .then(data => {
+          setCurationsData(data);
+          setListings(data.listings || []);
+        })
+        .catch(err => {
+          console.error('Fetch curations error:', err);
+          setError('Unable to load your curated homes. Please verify server connection.');
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      fetchCuratedListings({
+        city: selectedCity || undefined,
+        program: selectedProgram && selectedProgram !== 'All Programs' ? selectedProgram : undefined,
+        maxMonthlyPayment: typeof maxMonthlyPayment === 'number' ? maxMonthlyPayment : undefined,
+        leadId
       })
-      .catch(err => {
-        console.error('Fetch listings error:', err);
-        setError('Unable to load curated listings. Please verify server connection.');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [leadId, selectedCity, selectedProgram, maxMonthlyPayment]);
+        .then(data => {
+          setListings(data);
+        })
+        .catch(err => {
+          console.error('Fetch listings error:', err);
+          setError('Unable to load curated listings. Please verify server connection.');
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [leadId, curationScope, selectedCity, selectedProgram, maxMonthlyPayment]);
 
   // 3. Handle URL query parameters (e.g. ?listing=curated-or-portland-001)
   useEffect(() => {
@@ -243,34 +285,111 @@ export default function App() {
               />
             ) : (
               <div>
+                {/* Scope Switcher & Personal Curation Banner */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurationScope('all')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                        curationScope === 'all'
+                          ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-950/50'
+                          : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>All Curated Homes</span>
+                    </button>
+
+                    <button
+                      onClick={() => setCurationScope('my-curations')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                        curationScope === 'my-curations'
+                          ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold shadow-lg shadow-amber-950/50'
+                          : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Star className="w-3.5 h-3.5 fill-current" />
+                      <span>My Curated Homes</span>
+                      {curationsData?.hasCurations && curationsData.listings?.length > 0 && (
+                        <span className="ml-1 px-1.5 py-0.2 rounded-full bg-slate-950/80 text-amber-300 text-[10px] font-mono">
+                          {curationsData.listings.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {buyerEmail ? (
+                      <div className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 flex items-center gap-1.5">
+                        <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="font-mono">{buyerEmail}</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setIsIdentifyOpen(true)}
+                        className="px-3 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        <Mail className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Sign In with Email</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => setActiveView('map')}
+                      className="hidden sm:flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-medium ml-2"
+                    >
+                      <span>View Map</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Personal Curation Notice Banner (when My Curated Homes active) */}
+                {curationScope === 'my-curations' && curationsData?.hasCurations && (
+                  <div className="my-4 p-4 bg-gradient-to-r from-amber-950/40 via-slate-900 to-amber-950/30 border border-amber-500/40 rounded-2xl flex items-center justify-between gap-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center flex-shrink-0">
+                        <Star className="w-5 h-5 text-amber-400 fill-amber-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          <span>Homes Personally Curated for You by Mike Ford</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                            NMLS #288455
+                          </span>
+                        </h3>
+                        <p className="text-xs text-slate-300 mt-0.5">
+                          {curationsData.buyerNote || 'These single-family homes were hand-selected for your target budget and low-down payment eligibility.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Section Header */}
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mt-4 mb-4">
                   <div>
                     <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                      <span>Curated First-Time Homebuyer Platter</span>
+                      <span>{curationScope === 'my-curations' ? 'Your Personal Curated List' : 'Curated First-Time Homebuyer Platter'}</span>
                       <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
                         {listings.length} Single-Family Homes
                       </span>
                     </h2>
                     <p className="text-xs text-slate-400">
-                      Pre-screened for 0%–3.5% down programs, 2-1 temporary buydowns, and local agent tours
+                      {curationScope === 'my-curations'
+                        ? 'Hand-selected homes paired directly with your borrower profile from Mike Ford'
+                        : 'Pre-screened for 0%–3.5% down programs, 2-1 temporary buydowns, and local agent tours'}
                     </p>
                   </div>
-
-                  <button
-                    onClick={() => setActiveView('map')}
-                    className="hidden sm:flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-medium"
-                  >
-                    <span>View All on GeoSphere Map</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
                 </div>
 
                 {/* Loading / Error States */}
                 {loading ? (
                   <div className="text-center py-24 space-y-3">
                     <Sparkles className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
-                    <p className="text-sm font-semibold text-slate-300">Loading verbatim curated homes...</p>
+                    <p className="text-sm font-semibold text-slate-300">
+                      {curationScope === 'my-curations' ? 'Loading your married homes from Mike Ford...' : 'Loading verbatim curated homes...'}
+                    </p>
                     <p className="text-xs text-slate-500">Checking loan program overlays and upstream sweep flags</p>
                   </div>
                 ) : error ? (
@@ -285,19 +404,23 @@ export default function App() {
                     </button>
                   </div>
                 ) : listings.length === 0 ? (
-                  /* Honest Empty State - Prompt 1 Compliant */
+                  /* Honest Empty State */
                   <div className="text-center py-16 px-6 bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl max-w-lg mx-auto space-y-4">
                     <div className="w-12 h-12 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center mx-auto text-slate-400">
                       <Home className="w-6 h-6" />
                     </div>
                     <div>
                       <h3 className="text-base font-bold text-slate-200">
-                        {selectedCity || selectedProgram || maxMonthlyPayment
+                        {curationScope === 'my-curations'
+                          ? 'No personalized curated homes married yet'
+                          : selectedCity || selectedProgram || maxMonthlyPayment
                           ? 'No homes match your current filter'
                           : 'No curated homes currently available'}
                       </h3>
                       <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                        {selectedCity || selectedProgram || maxMonthlyPayment
+                        {curationScope === 'my-curations'
+                          ? 'Mike Ford has not yet married a custom list to this profile. You can ask Muse in the chat to submit a curation request, or sign in with your email if you already requested one.'
+                          : selectedCity || selectedProgram || maxMonthlyPayment
                           ? 'Try resetting your filters, or request custom curation for your target area from Mike Ford.'
                           : 'Our candidate pool is refreshed regularly with verified low/no-down payment qualifying single-family homes.'}
                       </p>
@@ -313,8 +436,8 @@ export default function App() {
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-center gap-3 pt-1">
-                      {(selectedCity || selectedProgram || maxMonthlyPayment) && (
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                      {curationScope === 'all' && (selectedCity || selectedProgram || maxMonthlyPayment) && (
                         <button
                           onClick={() => {
                             setSelectedCity('');
@@ -326,6 +449,17 @@ export default function App() {
                           Reset Filters
                         </button>
                       )}
+
+                      {curationScope === 'my-curations' && (
+                        <button
+                          onClick={() => setIsIdentifyOpen(true)}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5"
+                        >
+                          <Mail className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Sign In with Email</span>
+                        </button>
+                      )}
+
                       <button
                         onClick={() => setIsSidebarOpen(true)}
                         className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md flex items-center gap-1.5"
@@ -511,6 +645,19 @@ export default function App() {
         <UsdaIncomeAdjusterModal
           isOpen={isUsdaAdjusterOpen}
           onClose={() => setIsUsdaAdjusterOpen(false)}
+        />
+      )}
+
+      {isIdentifyOpen && (
+        <IdentifyModal
+          currentLeadId={leadId}
+          onClose={() => setIsIdentifyOpen(false)}
+          onIdentityResolved={(newLeadId, email) => {
+            setLeadId(newLeadId);
+            setBuyerEmail(email);
+            showToast(`Profile linked to ${email}!`);
+            loadBuyerCurations(newLeadId);
+          }}
         />
       )}
     </div>

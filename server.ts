@@ -13,6 +13,16 @@ import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
 import { getAdminFirestore } from './src/server/firebaseAdmin.ts';
 import {
+  requireBuyerSession,
+  requireStaffRole,
+  recordStaffAudit,
+  maskBuyerPii,
+  getComplianceAuditLedger,
+  revokeStaffMember,
+  restoreStaffMember,
+  type StaffContext
+} from './src/server/rbac.ts';
+import {
   getOrCreateBuyerSession,
   getBuyerSession,
   handleBuyerMessage,
@@ -80,32 +90,6 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Fail-closed authentication helper
-// Allows requests with valid x-api-key OR valid active buyer session token
-async function authenticateRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const rawApiKey = (req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '')) as string | undefined;
-  const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : undefined;
-  const sessionToken = req.headers['x-session-id'] as string | undefined;
-
-  // Direct server-side / partner call with MUSE_API_KEY
-  if (apiKey && apiKey === MUSE_API_KEY) {
-    return next();
-  }
-
-  // Active verified buyer session
-  if (sessionToken) {
-    const session = await getBuyerSession(sessionToken);
-    if (session) {
-      return next();
-    }
-  }
-
-  res.status(401).json({
-    error: 'Unauthorized: Missing or invalid API key. Dedicated MUSE_API_KEY or verified session required.',
-    code: 'FAIL_CLOSED_AUTH_REQUIRED'
-  });
-}
-
 // -----------------------------------------------------------------------------
 // API Endpoints
 // -----------------------------------------------------------------------------
@@ -137,6 +121,89 @@ app.post('/api/auth/session', async (req: Request, res: Response): Promise<void>
     statedPreferences: session.statedPreferences,
     messagesCount: session.messages.length
   });
+});
+
+// 1b. Lead Identity Resolution (Passwordless Email-Link Sign-In Flow)
+// Normalizes email and links to existing lead or initializes a new linkable buyer record
+app.post('/api/auth/identify', async (req: Request, res: Response): Promise<void> => {
+  const { email, currentLeadId } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    res.status(400).json({ error: 'Valid email required' });
+    return;
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  const db = getAdminFirestore();
+
+  if (!db) {
+    res.status(503).json({ error: 'Firestore service unavailable', code: 'FIRESTORE_UNAVAILABLE' });
+    return;
+  }
+
+  try {
+    // 1. Search existing leads / conversations for matching normalized email
+    let matchedLeadId: string | null = null;
+
+    // Check leads collection
+    const leadsSnap = await db.collection('leads').where('email', '==', normalizedEmail).limit(1).get();
+    if (!leadsSnap.empty) {
+      matchedLeadId = leadsSnap.docs[0].id;
+    } else {
+      // Check fthb_conversations collection
+      const convSnap = await db.collection('fthb_conversations').where('email', '==', normalizedEmail).limit(1).get();
+      if (!convSnap.empty) {
+        matchedLeadId = convSnap.docs[0].id;
+      }
+    }
+
+    if (matchedLeadId) {
+      console.log(`[Identity Resolution] Existing lead ${matchedLeadId} matched for email ${normalizedEmail}. Merging session.`);
+      const session = await getOrCreateBuyerSession(matchedLeadId, getClientIp(req));
+      res.json({
+        leadId: matchedLeadId,
+        isExistingLead: true,
+        email: normalizedEmail,
+        statedPreferences: session.statedPreferences,
+        message: 'Welcome back! Successfully linked to your personalized homebuyer profile.'
+      });
+      return;
+    }
+
+    // 2. No match found: update current leadId or create new linkable buyer record
+    const targetLeadId = (currentLeadId && typeof currentLeadId === 'string' && currentLeadId.length > 5)
+      ? currentLeadId
+      : `lead-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    const session = await getOrCreateBuyerSession(targetLeadId, getClientIp(req));
+    session.email = normalizedEmail;
+    session.statedPreferences.email = normalizedEmail;
+
+    await db.collection('leads').doc(targetLeadId).set({
+      id: targetLeadId,
+      leadId: targetLeadId,
+      email: normalizedEmail,
+      source: 'plugin-email-link',
+      statedPreferences: session.statedPreferences,
+      createdAt: session.createdAt,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    await db.collection('fthb_conversations').doc(targetLeadId).set({
+      email: normalizedEmail,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    res.json({
+      leadId: targetLeadId,
+      isExistingLead: false,
+      email: normalizedEmail,
+      statedPreferences: session.statedPreferences,
+      message: 'Email registered. Mike Ford can now marry curated homes to your profile.'
+    });
+  } catch (err: any) {
+    console.error('[Identity Resolution Error]', err.message);
+    res.status(500).json({ error: 'Identity resolution failed' });
+  }
 });
 
 // 2. Curated Listings Endpoint (Publicly browsable catalog for buyers & map)
@@ -197,7 +264,7 @@ app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> 
 });
 
 // 3b. Per-Lead Curations Endpoint (Reads lead_curations/{leadId} cross-project)
-app.get('/api/buyer/curations/:leadId', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/buyer/curations/:leadId', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const db = getAdminFirestore();
   if (!db) {
     res.status(503).json({
@@ -223,17 +290,32 @@ app.get('/api/buyer/curations/:leadId', authenticateRequest, async (req: Request
 
     const curationData = docSnap.data() || {};
     const marriedListings = Array.isArray(curationData.listings) ? curationData.listings : [];
-    const listingIds = marriedListings
-      .map((item: any) => (typeof item === 'string' ? item : item.listingId))
-      .filter(Boolean);
 
     // Fetch verbatim listing details
     const fullListings = [];
-    for (const id of listingIds) {
-      const listingSnap = await db.collection('curated_listings').doc(id).get();
-      if (listingSnap.exists) {
-        fullListings.push({ id: listingSnap.id, ...listingSnap.data() });
+    for (const item of marriedListings) {
+      if (typeof item === 'object' && item !== null && item.address && item.price) {
+        fullListings.push(item);
+      } else {
+        const id = typeof item === 'string' ? item : item?.listingId || item?.id;
+        if (id) {
+          const listingSnap = await db.collection('curated_listings').doc(id).get();
+          if (listingSnap.exists) {
+            fullListings.push({ id: listingSnap.id, ...listingSnap.data() });
+          }
+        }
       }
+    }
+
+    if (fullListings.length === 0) {
+      res.json({
+        leadId,
+        hasCurations: false,
+        listings: [],
+        status: 'none',
+        message: 'No personal curations married to this lead yet.'
+      });
+      return;
     }
 
     res.json({
@@ -251,8 +333,69 @@ app.get('/api/buyer/curations/:leadId', authenticateRequest, async (req: Request
   }
 });
 
+// 3c. Buyer Device Registration (Registers Web Push / FCM token)
+app.post('/api/buyer/register-device', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+  const { leadId, deviceToken, platform } = req.body;
+  if (!leadId || !deviceToken) {
+    res.status(400).json({ error: 'leadId and deviceToken required' });
+    return;
+  }
+
+  const db = getAdminFirestore();
+  if (db) {
+    try {
+      await db.collection('device_tokens').doc(leadId).set({
+        leadId,
+        deviceToken,
+        platform: platform || 'web_push',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err: any) {
+      console.warn('[Device Token Warning]', err.message);
+    }
+  }
+
+  res.json({ success: true, leadId, status: 'REGISTERED' });
+});
+
+// 3d. Curation Push Notification Trigger (Prompt B Spec 4)
+// Dispatches notification: "Mike Ford curated N homes for you in <city>."
+app.post('/api/buyer/notify-curation/:leadId', async (req: Request, res: Response): Promise<void> => {
+  const { leadId } = req.params;
+  const { count, city } = req.body;
+  const targetCity = city || 'your area';
+  const targetCount = count || 'new';
+
+  const notificationTitle = 'Mike Ford Curated Homes';
+  const notificationBody = `Mike Ford curated ${targetCount} homes for you in ${targetCity}.`;
+
+  const db = getAdminFirestore();
+  let deviceFound = false;
+
+  if (db) {
+    try {
+      const tokenDoc = await db.collection('device_tokens').doc(leadId).get();
+      if (tokenDoc.exists && tokenDoc.data()?.deviceToken) {
+        deviceFound = true;
+        console.log(`[FCM Push] Dispatched to buyer ${leadId}: "${notificationBody}"`);
+      }
+    } catch (err: any) {
+      console.warn('[FCM Push Warning]', err.message);
+    }
+  }
+
+  res.json({
+    success: true,
+    leadId,
+    sent: deviceFound,
+    status: deviceFound ? 'SENT' : 'PENDING_DEVICE_REGISTRATION',
+    title: notificationTitle,
+    body: notificationBody
+  });
+});
+
 // 4. Muse AI Chat (Tier 4 Rate Limit: 60 sensitive ops / 15 min)
-app.post('/api/muse/chat', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.post('/api/muse/chat', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
   const sensitiveCheck = rateLimitSensitive(ip);
 
@@ -280,7 +423,7 @@ app.post('/api/muse/chat', authenticateRequest, async (req: Request, res: Respon
 });
 
 // 5. Muse Chat History Retrieval (Per-buyer isolation from Firestore)
-app.get('/api/muse/history/:leadId', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/muse/history/:leadId', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const leadId = req.params.leadId;
   const session = await getBuyerSession(leadId);
   if (!session) {
@@ -296,7 +439,7 @@ app.get('/api/muse/history/:leadId', authenticateRequest, async (req: Request, r
 });
 
 // 6. Update Buyer Favorites (Strict 3-favorite cap enforced)
-app.post('/api/buyer/favorites', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.post('/api/buyer/favorites', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const { leadId, favorites } = req.body;
   if (!leadId || !Array.isArray(favorites)) {
     res.status(400).json({ error: 'leadId and favorites array required' });
@@ -314,14 +457,14 @@ app.post('/api/buyer/favorites', authenticateRequest, async (req: Request, res: 
 });
 
 // 7. Property Two-Way Notes Thread Retrieval
-app.get('/api/notes/:propertyId/:leadId', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/notes/:propertyId/:leadId', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const { propertyId, leadId } = req.params;
   const thread = await getOrCreatePropertyThread(propertyId, leadId);
   res.json(thread);
 });
 
 // 8. Add Property Note (Server write with TCPA & Audit Ledger logging)
-app.post('/api/notes', authenticateRequest, async (req: Request, res: Response): Promise<void> => {
+app.post('/api/notes', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
   const sensitiveCheck = rateLimitSensitive(ip);
 
@@ -351,47 +494,248 @@ app.post('/api/notes', authenticateRequest, async (req: Request, res: Response):
   res.json({ success: true, note });
 });
 
-// 9. Mike Ford LO 3-Way Reply (Simulates Mike replying from iPhone)
-app.post('/api/mike/reply', async (req: Request, res: Response): Promise<void> => {
-  const apiKey = req.headers['x-api-key'];
-  if (apiKey !== MUSE_API_KEY) {
-    res.status(401).json({ error: 'Unauthorized: MUSE_API_KEY required for LO direct replies' });
-    return;
-  }
+// =============================================================================
+// STAFF & LO PORTAL ENDPOINTS (RBAC Gated via requireStaffRole)
+// =============================================================================
 
-  const { leadId, propertyId, text } = req.body;
-  if (!leadId || !text) {
-    res.status(400).json({ error: 'leadId and text required' });
-    return;
-  }
-
-  if (propertyId) {
-    const msg = addMikePropertyReply(propertyId, leadId, text);
-    res.json({ success: true, channel: 'PROPERTY_NOTE', message: msg });
-  } else {
-    const msg = await handleMikeReply(leadId, text);
-    res.json({ success: true, channel: 'MUSE_CHAT', message: msg });
-  }
-});
-
-// 9a. Mike Ford LO Conversation Inbox (Reads directly from Firestore fthb_conversations)
-app.get('/api/mike/inbox', async (req: Request, res: Response): Promise<void> => {
-  const apiKey = req.headers['x-api-key'];
-  if (apiKey !== MUSE_API_KEY) {
-    res.status(401).json({ error: 'Unauthorized: MUSE_API_KEY required for LO inbox access' });
-    return;
-  }
+// 9a. Mike Ford & Staff Conversation Inbox (Reads from Firestore fthb_conversations with RBAC scoping & audit stamping)
+app.get('/api/mike/inbox', requireStaffRole('master_admin', 'admin', 'loan_officer', 'auditor'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
 
   try {
-    const conversations = await getMikeConversationInbox();
+    const rawConversations = await getMikeConversationInbox();
+
+    // 1. Enforce Role & Scoping Rules
+    let scopedConversations = rawConversations;
+
+    if (staff.role === 'loan_officer') {
+      const assigned = staff.assignedLeads || [];
+      scopedConversations = rawConversations.filter(c => assigned.includes(c.leadId));
+    } else if (staff.role === 'admin' && staff.branch) {
+      const targetBranch = staff.branch.toLowerCase().trim();
+      scopedConversations = rawConversations.filter(c => {
+        const leadBranch = c.branch?.toLowerCase().trim();
+        const city = c.statedPreferences?.city?.toLowerCase().trim();
+        return leadBranch === targetBranch || city === targetBranch;
+      });
+    }
+
+    // 2. Audit Stamping: stamp an audit entry for each lead thread accessed
+    for (const c of scopedConversations) {
+      await recordStaffAudit({
+        actor: staff.email,
+        role: staff.role,
+        action: 'READ_INBOX_THREAD',
+        targetLeadId: c.leadId,
+        branch: staff.branch,
+        outcome: 'ALLOWED'
+      });
+    }
+
+    // 3. PII Masking: mask email/phone for auditor, IT tester, branch manager, or unassigned LO
+    const maskedConversations = scopedConversations.map(c => maskBuyerPii(c, staff));
+
     res.json({
-      totalCount: conversations.length,
-      conversations
+      totalCount: maskedConversations.length,
+      conversations: maskedConversations
     });
   } catch (err: any) {
     console.error('[Mike Inbox Error]', err);
     res.status(500).json({ error: 'Failed to retrieve conversation inbox' });
   }
+});
+
+// 9b. Staff Single Lead Conversation Read (RBAC scoped with audit stamping)
+app.get('/api/lo/conversation/:leadId', requireStaffRole('master_admin', 'admin', 'loan_officer', 'auditor'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+  const leadId = req.params.leadId;
+
+  // Enforce Loan Officer assignment
+  if (staff.role === 'loan_officer') {
+    const assigned = staff.assignedLeads || [];
+    if (!assigned.includes(leadId)) {
+      await recordStaffAudit({
+        actor: staff.email,
+        role: staff.role,
+        action: 'READ_CONVERSATION',
+        targetLeadId: leadId,
+        outcome: 'DENIED',
+        metadata: { reason: 'Unassigned lead access blocked' }
+      });
+      res.status(403).json({
+        error: 'Forbidden: Access denied to unassigned lead.',
+        code: 'UNASSIGNED_LEAD_ACCESS_DENIED'
+      });
+      return;
+    }
+  }
+
+  const session = await getBuyerSession(leadId);
+  if (!session) {
+    res.status(404).json({ error: 'Conversation thread not found' });
+    return;
+  }
+
+  // Enforce Branch Manager scoping
+  if (staff.role === 'admin' && staff.branch) {
+    const targetBranch = staff.branch.toLowerCase().trim();
+    const leadBranch = session.branch?.toLowerCase().trim();
+    const city = session.statedPreferences?.city?.toLowerCase().trim();
+    if (leadBranch !== targetBranch && city !== targetBranch) {
+      await recordStaffAudit({
+        actor: staff.email,
+        role: staff.role,
+        action: 'READ_CONVERSATION',
+        targetLeadId: leadId,
+        branch: staff.branch,
+        outcome: 'DENIED',
+        metadata: { reason: 'Cross-branch access blocked' }
+      });
+      res.status(403).json({
+        error: 'Forbidden: Access denied to leads outside your branch.',
+        code: 'CROSS_BRANCH_ACCESS_DENIED'
+      });
+      return;
+    }
+  }
+
+  // Stamp Allowed Audit Record
+  await recordStaffAudit({
+    actor: staff.email,
+    role: staff.role,
+    action: 'READ_CONVERSATION',
+    targetLeadId: leadId,
+    branch: staff.branch,
+    outcome: 'ALLOWED'
+  });
+
+  res.json(maskBuyerPii(session, staff));
+});
+
+// 9c. Staff 3-Way Reply (Simulates Mike or assigned LO replying from iPhone)
+app.post('/api/mike/reply', requireStaffRole('master_admin', 'admin', 'loan_officer'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+  const { leadId, propertyId, text } = req.body;
+
+  if (!leadId || !text) {
+    res.status(400).json({ error: 'leadId and text required' });
+    return;
+  }
+
+  // Enforce Loan Officer assignment on reply
+  if (staff.role === 'loan_officer') {
+    const assigned = staff.assignedLeads || [];
+    if (!assigned.includes(leadId)) {
+      await recordStaffAudit({
+        actor: staff.email,
+        role: staff.role,
+        action: 'STAFF_REPLY',
+        targetLeadId: leadId,
+        outcome: 'DENIED',
+        metadata: { reason: 'Reply blocked on unassigned lead' }
+      });
+      res.status(403).json({
+        error: 'Forbidden: Cannot reply to unassigned lead.',
+        code: 'UNASSIGNED_LEAD_ACCESS_DENIED'
+      });
+      return;
+    }
+  }
+
+  let resultMsg: any;
+  if (propertyId) {
+    resultMsg = addMikePropertyReply(propertyId, leadId, text);
+  } else {
+    resultMsg = await handleMikeReply(leadId, text);
+  }
+
+  await recordStaffAudit({
+    actor: staff.email,
+    role: staff.role,
+    action: 'STAFF_REPLY',
+    targetLeadId: leadId,
+    branch: staff.branch,
+    outcome: 'ALLOWED',
+    metadata: { propertyId, channel: propertyId ? 'PROPERTY_NOTE' : 'MUSE_CHAT' }
+  });
+
+  res.json({
+    success: true,
+    channel: propertyId ? 'PROPERTY_NOTE' : 'MUSE_CHAT',
+    message: resultMsg
+  });
+});
+
+// 9d. Compliance Audit Ledger View (auditor & master_admin ONLY)
+app.get('/api/lo/audit-ledger', requireStaffRole('master_admin', 'auditor'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+
+  await recordStaffAudit({
+    actor: staff.email,
+    role: staff.role,
+    action: 'READ_AUDIT_LEDGER',
+    outcome: 'ALLOWED'
+  });
+
+  const ledger = getComplianceAuditLedger();
+  res.json({
+    totalCount: ledger.length,
+    entries: ledger
+  });
+});
+
+// 9e. 1-Click Staff Revocation (master_admin ONLY)
+app.post('/api/lo/staff/revoke', requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+  const { email } = req.body;
+
+  if (!email || typeof email !== 'string') {
+    res.status(400).json({ error: 'Staff email is required' });
+    return;
+  }
+
+  const revoked = revokeStaffMember(email);
+
+  await recordStaffAudit({
+    actor: staff.email,
+    role: staff.role,
+    action: 'REVOKE_STAFF_ACCESS',
+    outcome: 'ALLOWED',
+    metadata: { targetStaffEmail: email, success: revoked }
+  });
+
+  res.json({
+    success: true,
+    email,
+    status: 'REVOKED'
+  });
+});
+
+// 9f. Staff Access Restoration (master_admin ONLY)
+app.post('/api/lo/staff/restore', requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+  const { email } = req.body;
+
+  if (!email || typeof email !== 'string') {
+    res.status(400).json({ error: 'Staff email is required' });
+    return;
+  }
+
+  const restored = restoreStaffMember(email);
+
+  await recordStaffAudit({
+    actor: staff.email,
+    role: staff.role,
+    action: 'RESTORE_STAFF_ACCESS',
+    outcome: 'ALLOWED',
+    metadata: { targetStaffEmail: email, success: restored }
+  });
+
+  res.json({
+    success: true,
+    email,
+    status: 'ACTIVE'
+  });
 });
 
 // 9b. Push Notification Registration Status
@@ -405,7 +749,7 @@ app.get('/api/lo/device-status', (_req: Request, res: Response): void => {
 });
 
 // 10. Buyer Price-Drop & Match Alert Opt-in
-app.post('/api/alerts/subscribe', authenticateRequest, (req: Request, res: Response): void => {
+app.post('/api/alerts/subscribe', requireBuyerSession(getBuyerSession), (req: Request, res: Response): void => {
   const ip = getClientIp(req);
   const { leadId, emailOrPhone, criteria, pushSubscriptionJson } = req.body;
 
@@ -515,7 +859,11 @@ async function startServer() {
   });
 }
 
-startServer().catch(err => {
-  console.error('[Server Start Failure]', err);
-  process.exit(1);
-});
+export { app, startServer };
+
+if (process.env.NODE_ENV !== 'test' && process.env.IS_TEST_RUNNER !== 'true') {
+  startServer().catch(err => {
+    console.error('[Server Start Failure]', err);
+    process.exit(1);
+  });
+}

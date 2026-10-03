@@ -30,6 +30,18 @@ export interface BuyerSessionState {
   lastActiveAt: string;
   disclaimerServed: boolean;
   intakeCompleted: boolean;
+  branch?: string;
+  email?: string;
+  phone?: string;
+  assignedLo?: string;
+  leadCurationRequest?: {
+    status: 'requested' | 'pushed';
+    city: string;
+    priceRange?: string;
+    maxMonthlyPayment?: number;
+    source: string;
+    requestedAt: string;
+  };
   statedPreferences: {
     city?: string;
     maxPrice?: number;
@@ -39,6 +51,8 @@ export interface BuyerSessionState {
     downPaymentResources?: string;
     favorites: string[];
     viewedListingIds: string[];
+    email?: string;
+    phone?: string;
   };
   messages: ChatMessage[];
 }
@@ -74,10 +88,30 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
       lastActiveAt: session.lastActiveAt,
       disclaimerServed: session.disclaimerServed,
       intakeCompleted: session.intakeCompleted,
+      branch: session.branch,
+      email: session.email,
+      phone: session.phone,
+      assignedLo: session.assignedLo,
+      leadCurationRequest: session.leadCurationRequest,
       statedPreferences: session.statedPreferences,
       messages: sanitizedMessages,
       updatedAt: new Date().toISOString()
     }, { merge: true });
+
+    // If a curation request was made, mirror to the leads collection for Mike's queue
+    if (session.leadCurationRequest) {
+      await db.collection('leads').doc(session.leadId).set({
+        id: session.leadId,
+        leadId: session.leadId,
+        leadCurationRequest: session.leadCurationRequest,
+        city: session.statedPreferences.city || session.leadCurationRequest.city,
+        statedPreferences: session.statedPreferences,
+        email: session.email || null,
+        phone: session.phone || null,
+        source: 'plugin-chat',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
   } catch (err: any) {
     console.warn('[Firebase Admin] Error persisting conversation to fthb_conversations:', err.message);
   }
@@ -107,6 +141,11 @@ async function loadConversationFromFirestore(leadId: string): Promise<BuyerSessi
       lastActiveAt: data.lastActiveAt || new Date().toISOString(),
       disclaimerServed: Boolean(data.disclaimerServed),
       intakeCompleted: Boolean(data.intakeCompleted),
+      branch: data.branch,
+      email: data.email,
+      phone: data.phone,
+      assignedLo: data.assignedLo,
+      leadCurationRequest: data.leadCurationRequest,
       statedPreferences: data.statedPreferences || { favorites: [], viewedListingIds: [] },
       messages: Array.isArray(data.messages)
         ? data.messages.map((m: any) => ({
@@ -320,6 +359,42 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
     }
   }
 
+  // Check for Curation Intake Flow (Prompt B Spec 3)
+  const lowerText = cleanText.toLowerCase();
+  const isCurationTrigger =
+    lowerText === 'yes' ||
+    lowerText === 'yep' ||
+    lowerText === 'sure' ||
+    lowerText.includes('curate') ||
+    lowerText.includes('curated list') ||
+    lowerText.includes('request a list') ||
+    lowerText.includes('curated homes') ||
+    lowerText.includes('find homes for me');
+
+  if (isCurationTrigger || (session.statedPreferences.city && (lowerText.includes('curate') || lowerText.includes('list')))) {
+    if (!session.statedPreferences.city) {
+      museReplyText = `Would you like us to curate a list of low or no down payment qualifying homes?\n\nWhat city or county is your desired purchase area? (e.g. Portland, Beaverton, Hillsboro, Eugene, Springfield, or Vancouver)`;
+      citations.push('Mike Ford Curation Workflow (NMLS #288455)');
+    } else {
+      // City is known -> build structured leadCurationRequest in the exact shape Mike's queue expects
+      const priceStr = session.statedPreferences.maxPrice
+        ? `$${session.statedPreferences.maxPrice.toLocaleString()}`
+        : (session.statedPreferences.maxMonthlyPayment ? `~$${session.statedPreferences.maxMonthlyPayment}/mo` : 'PNW Entry-Level');
+
+      session.leadCurationRequest = {
+        status: 'requested',
+        city: session.statedPreferences.city,
+        priceRange: priceStr,
+        maxMonthlyPayment: session.statedPreferences.maxMonthlyPayment,
+        source: 'plugin-chat',
+        requestedAt: new Date().toISOString()
+      };
+
+      museReplyText = `Done — Mike Ford will personally curate homes for ${session.statedPreferences.city} and push them to your app.\n\nAs soon as Mike completes your list in the dashboard, it will appear under **My Curated Homes**!`;
+      citations.push('Mike Ford Curation Queue', 'NMLS #288455 Direct Intake');
+    }
+  }
+
   // Deterministic Compliance Fallback if Gemini not keyed or rate limited
   if (!museReplyText) {
     if (isComplexMathOrQuote) {
@@ -404,6 +479,10 @@ export async function getMikeConversationInbox(): Promise<BuyerSessionState[]> {
             lastActiveAt: data.lastActiveAt || new Date().toISOString(),
             disclaimerServed: Boolean(data.disclaimerServed),
             intakeCompleted: Boolean(data.intakeCompleted),
+            branch: data.branch,
+            email: data.email,
+            phone: data.phone,
+            assignedLo: data.assignedLo,
             statedPreferences: data.statedPreferences || { favorites: [], viewedListingIds: [] },
             messages: Array.isArray(data.messages)
               ? data.messages.map((m: any) => ({
@@ -440,10 +519,26 @@ function extractPreferencesFromText(text: string, session: BuyerSessionState) {
   const lower = text.toLowerCase();
   
   // City extraction
-  const cities = ['portland', 'gresham', 'vancouver', 'beaverton', 'hillsboro', 'oregon city', 'clackamas', 'tigard'];
+  const cities = [
+    'portland',
+    'gresham',
+    'vancouver',
+    'beaverton',
+    'hillsboro',
+    'oregon city',
+    'clackamas',
+    'tigard',
+    'springfield',
+    'eugene',
+    'salem',
+    'bend',
+    'corvallis',
+    'medford'
+  ];
   for (const c of cities) {
     if (lower.includes(c)) {
       session.statedPreferences.city = c.charAt(0).toUpperCase() + c.slice(1);
+      session.branch = c.toLowerCase();
       break;
     }
   }

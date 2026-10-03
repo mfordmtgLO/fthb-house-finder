@@ -152,3 +152,24 @@ export interface PublishingKit {
     buyerEmailBody: string;
   };
 }
+
+export interface BuyerCurationsResponse {
+  leadId: string;
+  hasCurations: boolean;
+  status: 'ready' | 'none' | 'requested' | 'pushed' | string;
+  curatedBy?: string;
+  pushedAt?: string | null;
+  buyerNote?: string | null;
+  listings: CuratedListing[];
+  message?: string;
+}
+
+export interface LeadCurationRequest {
+  status: 'requested' | 'pushed';
+  city: string;
+  priceRange?: string;
+  maxMonthlyPayment?: number;
+  source: string;
+  requestedAt: string;
+}
+

@@ -5,7 +5,7 @@
  * Manages local storage session cache, PII sanitization, and API endpoints.
  */
 
-import { CuratedListing, ChatMessage, PropertyThread, PublishingKit, BuyerSessionState } from './types';
+import { CuratedListing, ChatMessage, PropertyThread, PublishingKit, BuyerSessionState, BuyerCurationsResponse } from './types';
 
 const SESSION_STORAGE_KEY = 'fthb_buyer_lead_id';
 
@@ -105,6 +105,55 @@ export async function fetchMuseChatHistory(leadId: string): Promise<{ messages: 
   return res.json();
 }
 
+/**
+ * Reads the personal married curated list from GET /api/buyer/curations/:leadId
+ */
+export async function fetchBuyerCurations(leadId: string): Promise<BuyerCurationsResponse> {
+  const res = await fetch(`/api/buyer/curations/${leadId}`, {
+    headers: getAuthHeaders(leadId)
+  });
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Access denied to buyer curations.');
+    }
+    throw new Error(`Failed to fetch buyer curations: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Resolves or links buyer identity by normalized email (passwordless email-link flow)
+ */
+export async function resolveBuyerIdentity(email: string, currentLeadId?: string): Promise<{
+  leadId: string;
+  isExistingLead: boolean;
+  email: string;
+  statedPreferences?: any;
+  message: string;
+}> {
+  const res = await fetch('/api/auth/identify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      currentLeadId: currentLeadId || getLocalLeadId()
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Identity resolution failed');
+  }
+
+  const data = await res.json();
+  if (data.leadId) {
+    setLocalLeadId(data.leadId);
+  }
+  return data;
+}
+
 export async function updateFavoritesServer(leadId: string, favorites: string[]): Promise<string[]> {
   const res = await fetch('/api/buyer/favorites', {
     method: 'POST',
@@ -187,13 +236,14 @@ export async function submitMikeReply(params: {
   leadId: string;
   propertyId?: string;
   text: string;
-  apiKey: string;
+  token?: string;
 }): Promise<any> {
+  const token = params.token || 'fordmj@gmail.com';
   const res = await fetch('/api/mike/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': params.apiKey
+      'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify({
       leadId: params.leadId,
@@ -203,7 +253,8 @@ export async function submitMikeReply(params: {
   });
 
   if (!res.ok) {
-    throw new Error('Unauthorized or invalid Mike reply submission');
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Unauthorized or invalid staff reply submission');
   }
 
   return res.json();
@@ -221,18 +272,20 @@ export async function fetchLoDeviceStatus(): Promise<{
   return res.json();
 }
 
-export async function fetchMikeInbox(apiKey: string): Promise<{
+export async function fetchMikeInbox(token?: string): Promise<{
   totalCount: number;
   conversations: any[];
 }> {
+  const authToken = token || 'fordmj@gmail.com';
   const res = await fetch('/api/mike/inbox', {
     headers: {
-      'x-api-key': apiKey
+      'Authorization': `Bearer ${authToken}`
     }
   });
 
   if (!res.ok) {
-    throw new Error('Unauthorized or failed to fetch LO inbox');
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Unauthorized or failed to fetch LO inbox');
   }
 
   return res.json();
