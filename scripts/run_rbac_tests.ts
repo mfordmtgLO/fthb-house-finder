@@ -814,25 +814,79 @@ async function runTests() {
       results.push({ id: 'C5', name: 'Email-link sign-in normalizes and links without duplicate lead records', group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)", status: 'FAIL', detail: e.message, complianceEvidence: '' });
     }
 
-    // C6. New / updated lead_curations triggers push notification
+    // C6a. Unauthenticated POST to push notification returns 401
+    try {
+      const resC6Unauth = await fetch(`${BASE_URL}/api/buyer/notify-curation/test-lead-rbac-001`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 3, city: 'Beaverton' })
+      });
+      const passC6Unauth = resC6Unauth.status === 401;
+      results.push({
+        id: 'C6a',
+        name: 'Unauthenticated push notification trigger returns 401',
+        group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)",
+        status: passC6Unauth ? 'PASS' : 'FAIL',
+        detail: `Unauthenticated POST blocked with HTTP ${resC6Unauth.status} (FAIL_CLOSED_AUTH_REQUIRED).`,
+        complianceEvidence: 'Push endpoint gated with requireStaffRole(master_admin, admin).'
+      });
+    } catch (e: any) {
+      results.push({ id: 'C6a', name: 'Unauthenticated push notification trigger returns 401', group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)", status: 'FAIL', detail: e.message, complianceEvidence: '' });
+    }
+
+    // C6b. Staff POST with malicious input gets sanitized server-side
+    try {
+      const resC6Sanitized = await fetch(`${BASE_URL}/api/buyer/notify-curation/test-lead-rbac-001`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer fordmj@gmail.com'
+        },
+        body: JSON.stringify({
+          count: -10, // Invalid negative integer
+          city: "<script>alert('xss')</script>Portland 123-45-6789" // XSS injection + PII
+        })
+      });
+      const dataC6Sanitized = await resC6Sanitized.json();
+      const hasScriptTag = dataC6Sanitized.body?.includes('<script>') || dataC6Sanitized.sanitized?.city?.includes('<script>');
+      const hasRawSSN = dataC6Sanitized.body?.includes('123-45-6789');
+      const safeCount = dataC6Sanitized.sanitized?.count;
+      const passC6Sanitized = resC6Sanitized.status === 200 && !hasScriptTag && !hasRawSSN && safeCount === 1 && dataC6Sanitized.body?.includes('Mike Ford curated 1 homes');
+
+      results.push({
+        id: 'C6b',
+        name: 'Staff-gated push notification with malicious input gets sanitized server-side',
+        group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)",
+        status: passC6Sanitized ? 'PASS' : 'FAIL',
+        detail: `Sanitized count: ${safeCount}, body: "${dataC6Sanitized.body}". Markup and SSN stripped cleanly.`,
+        complianceEvidence: 'Server-side input sanitization enforces positive integer and markup-free strings.'
+      });
+    } catch (e: any) {
+      results.push({ id: 'C6b', name: 'Staff-gated push notification with malicious input gets sanitized server-side', group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)", status: 'FAIL', detail: e.message, complianceEvidence: '' });
+    }
+
+    // C6. New / updated lead_curations triggers push notification (Authorized Staff)
     try {
       const resC6 = await fetch(`${BASE_URL}/api/buyer/notify-curation/test-lead-rbac-001`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer fordmj@gmail.com'
+        },
         body: JSON.stringify({ count: 3, city: 'Beaverton' })
       });
       const dataC6 = await resC6.json();
       const passC6 = resC6.status === 200 && dataC6.body === 'Mike Ford curated 3 homes for you in Beaverton.';
       results.push({
         id: 'C6',
-        name: 'New/updated lead_curations triggers push notification dispatch',
+        name: 'Authorized staff triggers push notification dispatch',
         group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)",
         status: passC6 ? 'PASS' : 'FAIL',
         detail: `Notification payload generated: "${dataC6.body}". Status: ${dataC6.status}.`,
         complianceEvidence: 'Notification scoped strictly to target buyer; FCM token path verified.'
       });
     } catch (e: any) {
-      results.push({ id: 'C6', name: 'New/updated lead_curations triggers push notification dispatch', group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)", status: 'FAIL', detail: e.message, complianceEvidence: '' });
+      results.push({ id: 'C6', name: 'Authorized staff triggers push notification dispatch', group: "GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2)", status: 'FAIL', detail: e.message, complianceEvidence: '' });
     }
 
     // C7. Grep suite: zero instances of STARTER_CURATED_LISTINGS, SEED_LISTINGS, unsplash, 555, fake agents

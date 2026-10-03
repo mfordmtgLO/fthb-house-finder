@@ -360,16 +360,37 @@ app.post('/api/buyer/register-device', requireBuyerSession(getBuyerSession), asy
   res.json({ success: true, leadId, status: 'REGISTERED' });
 });
 
-// 3d. Curation Push Notification Trigger (Prompt B Spec 4)
-// Dispatches notification: "Mike Ford curated N homes for you in <city>."
-app.post('/api/buyer/notify-curation/:leadId', async (req: Request, res: Response): Promise<void> => {
+// 3d. Curation Push Notification Trigger (Staff Marry Action)
+// Security: Gated with master_admin and admin roles.
+// Robust server-side sanitization: positive integer count, plain string city (max 60 chars, no markup).
+app.post('/api/buyer/notify-curation/:leadId', requireStaffRole('master_admin', 'admin'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
   const { leadId } = req.params;
   const { count, city } = req.body;
-  const targetCity = city || 'your area';
-  const targetCount = count || 'new';
+
+  // Sanitize count: must be a positive integer (default 1, max 100)
+  const rawCount = typeof count === 'number' ? count : parseInt(String(count || '1'), 10);
+  const safeCount = Number.isInteger(rawCount) && rawCount > 0 ? Math.min(rawCount, 100) : 1;
+
+  // Sanitize city: plain string, max 60 chars, strip HTML/markup and control chars, scrub PII
+  const rawCityStr = typeof city === 'string' ? city : '';
+  const strippedCity = rawCityStr
+    .replace(/<[^>]*>?/gm, '') // Strip HTML tags
+    .replace(/[\x00-\x1F\x7F]/g, '') // Strip control characters
+    .trim();
+  const safeCity = (sanitizePiiInput(strippedCity) || 'your area').slice(0, 60);
 
   const notificationTitle = 'Mike Ford Curated Homes';
-  const notificationBody = `Mike Ford curated ${targetCount} homes for you in ${targetCity}.`;
+  const notificationBody = `Mike Ford curated ${safeCount} homes for you in ${safeCity}.`;
+
+  await recordStaffAudit({
+    actor: staff.email,
+    role: staff.role,
+    action: 'TRIGGER_CURATION_PUSH_NOTIFICATION',
+    targetLeadId: leadId,
+    outcome: 'ALLOWED',
+    metadata: { safeCount, safeCity, targetLeadId: leadId }
+  });
 
   const db = getAdminFirestore();
   let deviceFound = false;
@@ -392,7 +413,11 @@ app.post('/api/buyer/notify-curation/:leadId', async (req: Request, res: Respons
     sent: deviceFound,
     status: deviceFound ? 'SENT' : 'PENDING_DEVICE_REGISTRATION',
     title: notificationTitle,
-    body: notificationBody
+    body: notificationBody,
+    sanitized: {
+      count: safeCount,
+      city: safeCity
+    }
   });
 });
 
