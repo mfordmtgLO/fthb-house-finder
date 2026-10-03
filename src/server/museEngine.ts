@@ -11,6 +11,7 @@ import { GoogleGenAI } from '@google/genai';
 import { queryVantageGrounding } from './vantageKnowledge.ts';
 import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAuditLedger } from './compliance.ts';
+import { calculateCostOfWaiting, formatCostOfWaitingForMuse } from './costOfWaiting.ts';
 import { getAdminFirestore } from './firebaseAdmin.ts';
 
 export interface ChatMessage {
@@ -299,6 +300,23 @@ export async function handleBuyerMessage(
     cleanText.includes('debt to income') ||
     cleanText.includes('can i afford');
 
+  // Check for timing and cost of waiting inquiry
+  const isTimingQuestion =
+    cleanText.toLowerCase().includes('wait') ||
+    cleanText.toLowerCase().includes('timing') ||
+    cleanText.toLowerCase().includes('keep renting') ||
+    cleanText.toLowerCase().includes('rent vs buy') ||
+    cleanText.toLowerCase().includes('prices dropping') ||
+    cleanText.toLowerCase().includes('cost of waiting');
+
+  let costReport = null;
+  let costGrounding = '';
+  if (isTimingQuestion) {
+    const targetPrice = session.statedPreferences.maxPrice || 450000;
+    costReport = calculateCostOfWaiting({ targetPrice });
+    costGrounding = formatCostOfWaitingForMuse(costReport, 1);
+  }
+
   // Pull 2nd Brain grounding
   const grounding = queryVantageGrounding(cleanText);
 
@@ -326,12 +344,15 @@ export async function handleBuyerMessage(
       const prompt = `You are Muse, the intelligent, warm, encouraging first-time homebuyer assistant for Mike Ford (NMLS #288455).
 Mike is a licensed mortgage loan officer specializing in helping renters transition into homeownership with low/no down payment programs, seller credits, and 2-1 buydowns.
 
-GUARDRAILS & ARCHITECTURE LAWS:
-1. Warm, plain-language, encouraging tone. No intimidating jargon.
+GOLDEN TONGUE & COMPLIANCE RULES:
+1. Warm, plain-language, confidence-building tone. Celebrate that they are asking smart questions.
 2. NEVER guarantee rates or qualification. Use "likely qualifies based on curated guidelines."
-3. ESCALATION RULE: If the buyer asks for exact mortgage payments, custom rate quotes, credit qualification, or specific underwriting math, ALWAYS include the standard escalation: "let's check in with Mike for more details" or "let's ping Mike to answer your question." Muse never guesses on unverified math.
-4. EDUCATE on offer strategies: mention 2-1 temporary buydowns (seller funded discount reducing rate by 2% year 1, 1% year 2) and seller credits toward closing costs.
-5. GROUNDING KNOWLEDGE:
+3. If timing or cost-of-waiting is asked: quote the EXACT numbers from the deterministic calculator grounding below. Stated appreciation is an economic assumption, not a guarantee.
+4. If the buyer asks for exact mortgage payments, custom rate quotes, credit qualification, or specific underwriting math, ALWAYS include the standard escalation: "let's check in with Mike for more details" or "let's ping Mike to answer your question."
+5. EDUCATE on offer strategies: mention 2-1 temporary buydowns (seller funded discount reducing rate by 2% year 1, 1% year 2) and seller credits toward closing costs.
+
+GROUNDING KNOWLEDGE & CALCULATOR OUTPUT (CRITICAL - DO NOT INVENT NUMBERS):
+${costGrounding || 'Standard FTHB programs: FHA 3.5% down, Conventional 3% down, USDA 0% in eligible rural areas, state DPA grants.'}
 ${grounding}
 
 BUYER CURRENT PREFERENCES:
@@ -343,7 +364,7 @@ Favorites: ${session.statedPreferences.favorites.join(', ') || 'None yet'}
 BUYER MESSAGE:
 "${cleanText}"
 
-Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curated platter of matching Pacific Northwest homes available below.`;
+Respond concisely (2-3 paragraphs maximum). If appropriate, reference the curated platter of matching Pacific Northwest homes available below.`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -353,6 +374,7 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
       if (response.text) {
         museReplyText = response.text.trim();
         citations.push('Vantage 2nd Brain Knowledge Base', 'Gemini 2.5 Flash');
+        if (costReport) citations.push('Deterministic Cost-of-Waiting Calculator');
       }
     } catch (e: unknown) {
       console.warn('[Muse Gemini Fallback Activated]', e);
@@ -397,7 +419,11 @@ Respond concisely (2-4 paragraphs maximum). If appropriate, reference the curate
 
   // Deterministic Compliance Fallback if Gemini not keyed or rate limited
   if (!museReplyText) {
-    if (isComplexMathOrQuote) {
+    if (isTimingQuestion && costReport) {
+      const oneYr = costReport.intervals[1];
+      museReplyText = `You're asking a really smart question! Deciding whether to buy now or wait is one of the most common dilemmas for first-time buyers.\n\nBased on a $${costReport.targetPrice.toLocaleString()} purchase and assuming a standard 3.5% annual appreciation with $${costReport.monthlyRent.toLocaleString()}/mo rent:\n• Waiting 1 year has an estimated total cost of waiting of $${oneYr.totalCostOfWaiting.toLocaleString()}.\n• That includes ~$${oneYr.cumulativeRentPaid.toLocaleString()} paid in rent, $${oneYr.missedPrincipalEquity.toLocaleString()} in missed principal equity paydown, and a projected $${oneYr.priceIncrease.toLocaleString()} increase in property value.\n• If rates drop to ${oneYr.futureMonthlyPI.downRatePercent}%, future monthly P&I would be ~$${oneYr.futureMonthlyPI.downRate.toLocaleString()}/mo.\n\nRemember that future appreciation and rates are economic assumptions, not guarantees. Low-down payment programs often allow buyers to step into equity sooner.\n\nWant Mike Ford (NMLS #288455) to review your personal scenario?`;
+      citations.push('Deterministic Cost-of-Waiting Calculator (MortgageLab Algorithm)');
+    } else if (isComplexMathOrQuote) {
       isEscalation = true;
       museReplyText = `That's a great question about the specific numbers. Because mortgage guidelines, local taxes, insurance escrows, and credit tiers affect your exact bottom line, let's check in with Mike for more details!\n\nMike can run the exact scenario with zero obligation and explore whether a 2-1 temporary buydown or down payment assistance grant fits your household budget. In the meantime, take a look at the curated homes below that match our low-down payment filters.`;
       citations.push('Mike Ford Loan Officer Consultation Rule', 'CFPB Reg Z');

@@ -62,7 +62,7 @@ export function validateIncomeBracket(val: string): IncomeBracket | null {
  */
 export function detectBuyerActionItems(text: string): { isQuestion: boolean; actionCategory: string | null } {
   const lower = text.toLowerCase();
-  const questionWords = ['how', 'what', 'can i', 'qualify', 'down payment', 'monthly payment', 'rate', 'credit', 'schedule', 'tour', 'offer', 'buydown', '?'];
+  const questionWords = ['how', 'what', 'can i', 'qualify', 'down payment', 'monthly payment', 'rate', 'credit', 'schedule', 'tour', 'offer', 'buydown', 'help', '?'];
   
   const hasQuestion = questionWords.some(q => lower.includes(q));
   if (!hasQuestion) {

@@ -509,7 +509,7 @@ app.post('/api/notes', requireBuyerSession(getBuyerSession), async (req: Request
     return;
   }
 
-  const note = await addPropertyNote({
+  const { note, aiReply } = await addPropertyNote({
     propertyId,
     leadId,
     authorName,
@@ -518,7 +518,7 @@ app.post('/api/notes', requireBuyerSession(getBuyerSession), async (req: Request
     tcpaAccepted: Boolean(tcpaAccepted)
   });
 
-  res.json({ success: true, note });
+  res.json({ success: true, note, aiReply });
 });
 
 // =============================================================================

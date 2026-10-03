@@ -13,7 +13,8 @@ import {
   Building2,
   AlertCircle,
   UserCheck,
-  RefreshCw
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 import { CuratedListing, PropertyThread, PropertyNoteMessage } from '../types';
 import { fetchPropertyThread, postPropertyNote } from '../api';
@@ -107,9 +108,11 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
         if (res.note) {
           setThread(prev => {
             if (!prev) return null;
+            const newMsgs = [res.note];
+            if (res.aiReply) newMsgs.push(res.aiReply);
             return {
               ...prev,
-              messages: [...prev.messages, res.note]
+              messages: [...prev.messages, ...newMsgs]
             };
           });
         }
@@ -179,16 +182,29 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
             thread.messages.map(msg => (
               <div
                 key={msg.id}
-                className={`p-3 rounded-xl text-xs leading-relaxed ${
+                className={`p-3.5 rounded-xl text-xs leading-relaxed ${
                   msg.sender === 'buyer'
                     ? 'bg-slate-800/90 border border-slate-700 ml-6 text-slate-200'
+                    : msg.sender === 'muse'
+                    ? 'bg-gradient-to-br from-indigo-950/60 to-slate-900 border border-indigo-500/40 mr-4 text-slate-100 shadow-md'
                     : 'bg-amber-950/40 border border-amber-500/40 mr-6 text-amber-100'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1.5 text-[11px]">
-                  <span className="font-bold flex items-center gap-1">
-                    {msg.sender === 'buyer' ? <User className="w-3 h-3 text-cyan-400" /> : <ShieldCheck className="w-3 h-3 text-amber-400" />}
+                  <span className="font-bold flex items-center gap-1.5">
+                    {msg.sender === 'buyer' ? (
+                      <User className="w-3 h-3 text-cyan-400" />
+                    ) : msg.sender === 'muse' ? (
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    ) : (
+                      <ShieldCheck className="w-3 h-3 text-amber-400" />
+                    )}
                     <span>{msg.authorName}</span>
+                    {msg.sender === 'muse' && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                        AI Instant Response
+                      </span>
+                    )}
                   </span>
                   <span className="text-slate-400 text-[10px]">
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -196,6 +212,17 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
                 </div>
 
                 <p className="whitespace-pre-line">{msg.text}</p>
+
+                {msg.citations && msg.citations.length > 0 && (
+                  <div className="mt-2.5 pt-2 border-t border-indigo-900/40 flex flex-wrap gap-1.5 text-[10px] text-indigo-300/80 font-mono">
+                    <span className="text-slate-400">Sources:</span>
+                    {msg.citations.map((c, i) => (
+                      <span key={i} className="px-1.5 py-0.5 rounded bg-indigo-950 border border-indigo-800/50">
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {msg.isQuestion && (
                   <div className="mt-2 text-[10px] text-cyan-300 font-mono flex items-center gap-1">

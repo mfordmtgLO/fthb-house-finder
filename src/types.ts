@@ -95,12 +95,15 @@ export interface LoanOfficerProfile {
 
 export interface PropertyNoteMessage {
   id: string;
-  sender: 'buyer' | 'lo' | 'agent';
+  sender: 'buyer' | 'lo' | 'agent' | 'muse';
   authorName: string;
   text: string;
   timestamp: string;
   isQuestion: boolean;
   actionCategory?: string | null;
+  tier?: 1 | 2;
+  isAi?: boolean;
+  citations?: string[];
 }
 
 export interface PropertyThread {
