@@ -354,34 +354,42 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
             <span className="text-[11px] text-slate-500">Post note visible to Mike &amp; Partner Agent</span>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <input
-              type="text"
-              value={noteText}
-              onChange={(e) => {
-                setNoteText(e.target.value);
-                if (errorMessage) setErrorMessage(null);
-              }}
-              placeholder="Type your question (e.g. 'Can we negotiate a 2-1 buydown here?')"
-              className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
-            />
-            <button
-              type="submit"
-              disabled={!noteText.trim() || submitting}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-95"
-            >
-              {submitting ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Posting…</span>
-                </>
-              ) : (
-                <>
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Post Note</span>
-                </>
-              )}
-            </button>
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                value={noteText}
+                maxLength={500}
+                onChange={(e) => {
+                  setNoteText(e.target.value);
+                  if (errorMessage) setErrorMessage(null);
+                }}
+                placeholder="Type your question (e.g. 'Can we negotiate a 2-1 buydown here?')"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+              />
+              <button
+                type="submit"
+                disabled={!noteText.trim() || submitting}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-95"
+              >
+                {submitting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Posting…</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Post Note</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="flex justify-end pr-1 text-[10px] text-slate-500 font-mono">
+              <span className={noteText.length >= 480 ? 'text-amber-400 font-semibold' : ''}>
+                {noteText.length}/500
+              </span>
+            </div>
           </div>
 
           <div className="flex items-start space-x-2 text-[10px] text-slate-400">

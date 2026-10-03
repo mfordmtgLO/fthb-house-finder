@@ -254,7 +254,8 @@ export async function handleBuyerMessage(
   ipAddress: string
 ): Promise<ChatMessage> {
   const session = await getOrCreateBuyerSession(leadId, ipAddress);
-  const cleanText = sanitizePiiInput(rawText);
+  // Zero-trust PII sanitization + 1,000 char defensive length cap
+  const cleanText = sanitizePiiInput(rawText).substring(0, 1000);
 
   // Record buyer message in session
   const buyerMsg: ChatMessage = {

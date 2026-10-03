@@ -361,6 +361,7 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
             <input
               type="text"
               value={inputMessage}
+              maxLength={1000}
               onChange={(e) => setInputMessage(e.target.value)}
               placeholder="Ask Muse about homes, rates, 0% down..."
               className="flex-1 min-w-0 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
@@ -374,9 +375,12 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
               <Send className="w-4 h-4" />
             </button>
           </form>
-          <p className="text-[10px] text-slate-500 text-center mt-1.5">
-            Confidential. PII scrubbed. Direct line with Mike Ford, NMLS #288455.
-          </p>
+          <div className="flex items-center justify-between mt-1.5 px-0.5 text-[10px] text-slate-500">
+            <span>Confidential. PII scrubbed. NMLS #288455.</span>
+            <span className={`font-mono ${inputMessage.length >= 950 ? 'text-amber-400 font-semibold' : ''}`}>
+              {inputMessage.length}/1000
+            </span>
+          </div>
         </div>
       </div>
     </aside>

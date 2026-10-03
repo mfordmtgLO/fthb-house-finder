@@ -512,8 +512,8 @@ app.post('/api/notes', requireBuyerSession(getBuyerSession), async (req: Request
   const { note, aiReply } = await addPropertyNote({
     propertyId,
     leadId,
-    authorName,
-    text,
+    authorName: typeof authorName === 'string' ? authorName.substring(0, 100) : authorName,
+    text: typeof text === 'string' ? text.substring(0, 500) : text,
     ipAddress: ip,
     tcpaAccepted: Boolean(tcpaAccepted)
   });

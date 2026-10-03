@@ -248,7 +248,8 @@ export async function addPropertyNote(params: {
 }): Promise<{ note: PropertyNoteMessage; aiReply?: PropertyNoteMessage | null }> {
   const { propertyId, leadId, authorName, text, ipAddress, tcpaAccepted } = params;
   const thread = await getOrCreatePropertyThread(propertyId, leadId);
-  const cleanText = sanitizePiiInput(text);
+  // Zero-trust PII sanitization + 500 char defensive length cap
+  const cleanText = sanitizePiiInput(text).substring(0, 500);
 
   const actionCheck = detectBuyerActionItems(cleanText);
 

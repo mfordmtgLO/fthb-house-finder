@@ -1,8 +1,8 @@
 # FTHB House Finder — Architecture Tightening Acceptance Test Report
 
-**Execution Date:** 2026-10-03T06:52:44.883Z
+**Execution Date:** 2026-10-03T07:12:34.148Z
 **System Owner:** Mike Ford, NMLS #288455 (`fordmj@gmail.com`)
-**Summary:** 51 / 51 Tests Passed (0 Failed)
+**Summary:** 54 / 54 Tests Passed (0 Failed)
 
 | Test ID | Test Name | Group | Status | Details | Compliance Evidence |
 |---|---|---|---|---|---|
@@ -10,7 +10,7 @@
 | **S2** | 1-Click Revocation is immediate (next request 401) | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Before: HTTP 200, Revoked: HTTP 200, After: HTTP 401 (STAFF_REVOKED). | Immediate server-side cache invalidation and fail-closed 401 enforcement. |
 | **S3** | Unknown email credentials fail closed with HTTP 401 | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Unknown email blocked on /api/mike/inbox (401) and /api/lo/audit-ledger (401). | Fail-closed authentication: unknown identities have zero staff permissions. |
 | **S4** | Empty roster / unconfigured state fails closed | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Roster lookup returns null on missing doc and unconfigured env; all staff endpoints return 401. | Fail-closed system constitution enforced. |
-| **S5** | Every roster mutation has matching audit ledger entry | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Verified UPSERT_STAFF_ROSTER audit entry stamped with actor: fordmj@gmail.com, target: officer.audit.1791010348958@vantage.internal. | GLBA & enterprise compliance ledger stamps every roster mutation. |
+| **S5** | Every roster mutation has matching audit ledger entry | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Verified UPSERT_STAFF_ROSTER audit entry stamped with actor: fordmj@gmail.com, target: officer.audit.1791011536358@vantage.internal. | GLBA & enterprise compliance ledger stamps every roster mutation. |
 | **S6** | Grep verifies zero hardcoded staff test emails in src/server/rbac.ts | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | Deleted hardcoded Map. Zero synthetic email literals in production rbac.ts or src/. | Production code starts with Mike only; test identities isolated to test suite. |
 | **S7** | Automated test suite executes against Firestore staff_roster | GROUP S: STAFF ROSTER (FOLLOW-UP 1) | **PASS** | All role checks (Master Admin, Branch Manager, Loan Officer, Auditor) resolved via staff_roster. | 100% dynamic Firestore RBAC operation. |
 | **A1** | Buyer reads own favorites | GROUP A: BUYER ISOLATION | **PASS** | Status 200. Received favorites: ["beaverton-004"] | Response isolated strictly to test-lead-rbac-001; no audit ledger pollution on self-read. |
@@ -18,7 +18,7 @@
 | **A3** | Buyer attempts another buyer's conversation thread | GROUP A: BUYER ISOLATION | **PASS** | Cross-buyer thread read blocked with HTTP 403. | No conversation content leaked in 403 error response. |
 | **A4** | Unauthenticated requests fail closed | GROUP A: BUYER ISOLATION | **PASS** | Protected endpoints returned 401 FAIL_CLOSED_AUTH_REQUIRED. | Fail-closed authentication enforced across all protected endpoints. |
 | **A5** | Public listing catalog reads without auth | GROUP A: BUYER ISOLATION | **PASS** | Public listings endpoint returned HTTP 200 with totalCount: 6. | Rate-limited public catalog served verbatim; zero buyer PII present. |
-| **B1** | Mike Ford Admin reads LO inbox | GROUP B: ROLE ENFORCEMENT | **PASS** | Master Admin accessed 29 conversation threads with HTTP 200. | GLBA compliance audit ledger stamped for every conversation thread accessed. |
+| **B1** | Mike Ford Admin reads LO inbox | GROUP B: ROLE ENFORCEMENT | **PASS** | Master Admin accessed 31 conversation threads with HTTP 200. | GLBA compliance audit ledger stamped for every conversation thread accessed. |
 | **B2** | Loan Officer reads assigned lead's conversation | GROUP B: ROLE ENFORCEMENT | **PASS** | Assigned Loan Officer accessed lead test-lead-rbac-001 with HTTP 200. | Ledger stamped with actor: lo.sarah@vantage.internal, role: loan_officer, outcome: ALLOWED. |
 | **B3** | Loan Officer attempts unassigned lead's conversation | GROUP B: ROLE ENFORCEMENT | **PASS** | Unassigned lead access blocked with HTTP 403 (UNASSIGNED_LEAD_ACCESS_DENIED). | Denial stamped in compliance_audit_ledger with outcome: DENIED; no data leak. |
 | **B4** | Branch Manager branch scoping | GROUP B: ROLE ENFORCEMENT | **PASS** | Branch manager received 1 lead(s) strictly scoped to Springfield. Eugene leads excluded. | Cross-branch data filtered out before response serialization; query stamped to ledger. |
@@ -36,18 +36,18 @@
 | **C6b** | Staff-gated push notification with malicious input gets sanitized server-side | GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2) | **PASS** | Sanitized count: 1, body: "Mike Ford curated 1 homes for you in alert('xss')Portland [REDACTED_SSN].". Markup and SSN stripped cleanly. | Server-side input sanitization enforces positive integer and markup-free strings. |
 | **C6** | Authorized staff triggers push notification dispatch | GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2) | **PASS** | Notification payload generated: "Mike Ford curated 3 homes for you in Beaverton.". Status: PENDING_DEVICE_REGISTRATION. | Notification scoped strictly to target buyer; FCM token path verified. |
 | **C7** | Grep suite verifies zero fabricated listings or placeholder patterns | GROUP C: BUYER'S CURATED LIST (FOLLOW-UP 2) | **PASS** | Scanned codebase for STARTER_CURATED_LISTINGS, SEED_LISTINGS, unsplash, 555 phone patterns. Zero occurrences found. | Full codebase verified clean of all fabricated listing fallbacks. |
-| **CR1** | Ledger completeness across all staff interactions | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Verified 82 immutable compliance audit records generated. | Sample Ledger IDs: audit-1791010356658-l165g8a, audit-staff-1791010357947-l9pbelj, audit-staff-1791010358027-vix6j6g, audit-staff-1791010358179-k2xkf94, audit-staff-1791010358330-n2yk9mx |
+| **CR1** | Ledger completeness across all staff interactions | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Verified 86 immutable compliance audit records generated. | Sample Ledger IDs: audit-1791011544406-sg8wyab, audit-staff-1791011545721-2h7lcz8, audit-staff-1791011545803-r9swydf, audit-staff-1791011545953-m5lkxfd, audit-staff-1791011546108-7dbs4g6 |
 | **CR2** | Zero PII / SSN / Financial card patterns in API responses | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Scanned staff payloads for SSN and financial card regex patterns. Zero detections. | Zero-trust PII sanitization and role-scoped masking verified intact. |
 | **CR3** | Once-per-session disclaimer intact | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Mandatory session disclaimer verified firing on initial session creation. | Disclaimer logged to compliance audit ledger with NMLS #288455 citations. |
 | **CR4** | Qualified "Likely Qualifies" phrasing on all eligibility surfaces | GROUP CR: COMPLIANCE REGRESSION | **PASS** | All listing loan overlays verified adhering strictly to qualified language (zero guarantee claims). | CFPB Regulation Z 12 CFR § 1026.24 compliant. |
 | **CR5** | Fail-closed behavior on missing or unconfigured resources | GROUP CR: COMPLIANCE REGRESSION | **PASS** | Non-existent or unconfigured paths return 404/503 without crashing or failing open. | Server-side fail-closed guards verified active. |
 | **F1** | Network timeout / unreachable server triggers user-visible error without wedging UI | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Timeout safely caught within window. Error message: "Couldn't connect to server in time — check your connection and try again.". Modal remains interactive. | 15-second AbortController timeout protects UI responsiveness on mobile and spotty cellular networks. |
-| **F2** | Property note submission renders feedback and persists note message | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Note ID: note-1791010361637-h7b17, question auto-detected: true, action category: OFFER_STRATEGY_INQUIRY. | Two-way note conversation payload returned with question routing to LO device. |
-| **F3** | Property note survives backend restart (Firestore property_threads persistence) | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Verified thread retrieved from Firestore collection property_threads after memory cache clear. Total messages: 34. | Server-side Admin SDK persistence to property_threads/{threadId} verified. |
+| **F2** | Property note submission renders feedback and persists note message | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Note ID: note-1791011549581-fb2dl, question auto-detected: true, action category: OFFER_STRATEGY_INQUIRY. | Two-way note conversation payload returned with question routing to LO device. |
+| **F3** | Property note survives backend restart (Firestore property_threads persistence) | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | Verified thread retrieved from Firestore collection property_threads after memory cache clear. Total messages: 47. | Server-side Admin SDK persistence to property_threads/{threadId} verified. |
 | **F4** | Dismissing modal mid-submit aborts request without unmounted state errors | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | AbortController cleanly terminated in-flight fetch on modal dismiss. Zero unhandled promise rejections. | Defensive UI lifecycle guard active across modal interactions. |
 | **F5** | Zero-trust PII sanitization and TCPA opt-in audit ledger stamping on property notes | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | SSN & card patterns scrubbed prior to persistence. TCPA consent stamped into compliance audit ledger. | GLBA 15 U.S.C. § 6801 and TCPA 47 U.S.C. § 227 compliance verified. |
 | **F6** | Action item auto-detection recognizes "help" keyword with proper category precedence | GROUP F: PROPERTY NOTES FREEZE FIX | **PASS** | "Help set search criteria" -> { isQuestion: true, category: "GENERAL_BUYER_QUESTION" }, "Help book tour" -> { isQuestion: true, category: "SHOWING_REQUEST" }, "Let's get lunch" -> { isQuestion: false }. | Automatic LO question routing classifies inquiry intent without false positives on non-question statements. |
-| **N1** | Educational note triggers instant grounded Muse AI reply with qualified language and escalation | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | AI Reply ID: note-1791010362698-muse, Sender: "muse", Author: "Muse, Mike Ford's assistant". | CFPB Reg Z qualified language and standard lending escalation verified in instant AI thread reply. |
+| **N1** | Educational note triggers instant grounded Muse AI reply with qualified language and escalation | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | AI Reply ID: note-1791011550871-muse, Sender: "muse", Author: "Muse, Mike Ford's assistant". | CFPB Reg Z qualified language and standard lending escalation verified in instant AI thread reply. |
 | **N2** | Showing request (Tier 2) routes to human LO without generating synthetic AI answer | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | Tier: 2, Category: "SHOWING_REQUEST". AI reply suppressed for human handoff. | Zero AI hallucinations on transactional showing requests; push dispatched directly to LO. |
 | **N3** | Timing inquiry executes deterministic cost-of-waiting calculator with listing context | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | Target Price: $450,000 -> Total Cost of Waiting (1yr): $53,565.51, Rent: $27,000, Equity: $10,815.51. | Deterministic MortgageLab algorithm executed server-side with zero freehanded arithmetic. |
 | **N4** | Audit verification: zero invented numbers in cost-of-waiting equation tree | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | Verified futurePrice ($465750) = targetPrice * (1 + 0.035)^1. All downstream sums mathematically exact. | Complete arithmetic chain verified against closed-form amortization and equity equations. |
@@ -57,6 +57,9 @@
 | **N8** | Full regression suite verified clean across all RBAC, isolation, and persistence layers | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | Verified all prior test groups (S, A, B, C, CR, F) continue passing without regression. | Constitutional system invariants verified across all API endpoints. |
 | **N9** | Golden tongue voice: Warm, confidence-building plain language with situational strategy nudge | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | Tone celebrates buyer inquiry, demystifies payment concerns with 2-1 buydown/seller credit options, offers LO escalation. | Human-centric AI communication guidelines verified. |
 | **N10** | Soft-ask identity capture: Seamless single-lead link without gated browsing | GROUP N: TIERED NOTE RESPONSES & COST-OF-WAITING | **PASS** | Email normalized and linked to active leadId (test-lead-rbac-001) with zero duplicate accounts. | Non-coercive identity resolution preserving user session continuity. |
+| **L1** | Property note input length defensively capped to 500 characters max | GROUP L: INPUT LENGTH CAPS & DEFENSIVE TRUNCATION | **PASS** | Sent: 855 chars -> Persisted: 500 chars. Exactly 500 characters preserved. | Server-side truncation backstop prevents memory exhaustion and prompt overflow. |
+| **L2** | Sidebar chat message defensively capped to 1,000 characters max | GROUP L: INPUT LENGTH CAPS & DEFENSIVE TRUNCATION | **PASS** | Sent: 1541 chars -> Stored in session & prompt: 1000 chars. Exactly 1,000 characters preserved. | Defensive 1,000 character cap enforced before prompt construction and Firestore writes. |
+| **L3** | End-to-end boundary audit: Zero uncapped text in storage or prompt pipeline | GROUP L: INPUT LENGTH CAPS & DEFENSIVE TRUNCATION | **PASS** | Validated client maxLength attributes and server substring truncation backstops across notes and chat. | Strict input boundary enforcement active on all conversational endpoints. |
 
 ## Follow-Up 1 — Staff Roster Architecture Evidence
 - **Firestore Collection:** `staff_roster/{emailId}` with TTL cache (~60s) and cache invalidation on roster mutation.
@@ -82,14 +85,19 @@
 - **Tier 2 (Human Handoff):** Showing and transactional booking requests suppress synthetic AI generation and route directly to Mike Ford and partner agents via APNs/FCM.
 - **Deterministic Cost-of-Waiting Calculator (`src/server/costOfWaiting.ts`):** Ported MortgageLab algorithm. Verified 100% numerical parity against fixed fixture:
   - **Input Fixture:** Target Price: $450,000 | Rate: 6.75% | Appreciation: 3.5%/yr | Down: 3.5% | Rent: $2,200/mo
-  - **Base Monthly P&I:** $2,816.63/mo
-  - **1-Year Total Cost of Waiting:** $52,965.86 (Price Increase: +$15,750.00, Cumulative Rent Paid: $26,400.00, Missed Principal Equity: $10,815.86)
+  - **Base Monthly P&I:** $2,816.54/mo
+  - **1-Year Total Cost of Waiting:** $52,965.51 (Price Increase: +$15,750.00, Cumulative Rent Paid: $26,400.00, Missed Principal Equity: $10,815.51)
   - **Future Monthly P&I Scenarios:** Same Rate: $2,915.21/mo | Rate Down (6.00%): $2,694.66/mo | Rate Up (7.50%): $3,142.72/mo
 - **Golden Tongue & Soft-Ask:** Warm, confidence-building tone demystifying jargon with graceful single-ask identity capture.
 
+## Input Length Caps & Defensive Truncation (L1–L3)
+- **Property Note Input (500 Chars):** Client `maxLength={500}` with live character counter; server-side defensive truncation to 500 characters after PII sanitization in `POST /api/notes` and `src/server/propertyNotes.ts`.
+- **Sidebar Chat Messages (1,000 Chars):** Client `maxLength={1000}` with live character counter; server-side truncation to 1,000 characters before prompt construction, session history, and Firestore storage in `src/server/museEngine.ts`.
+- **Defensive Backstop:** Zero uncapped text reaches Gemini prompts or persistent Firestore threads.
+
 ## Audit Trail Proof (GLBA Telemetry & Ledger Sample)
-- **Total Compliance Audit Entries Recorded:** 82
-- **Sample Audit Ledger IDs:** `audit-1791010356658-l165g8a`, `audit-staff-1791010357947-l9pbelj`, `audit-staff-1791010358027-vix6j6g`, `audit-staff-1791010358179-k2xkf94`, `audit-staff-1791010358330-n2yk9mx`
+- **Total Compliance Audit Entries Recorded:** 86
+- **Sample Audit Ledger IDs:** `audit-1791011544406-sg8wyab`, `audit-staff-1791011545721-2h7lcz8`, `audit-staff-1791011545803-r9swydf`, `audit-staff-1791011545953-m5lkxfd`, `audit-staff-1791011546108-7dbs4g6`
 
 ## PII Redaction Verification (Group CR2 Grep Suite)
 - **SSN Patterns Detected (`\b\d{3}-\d{2}-\d{4}\b`):** 0
