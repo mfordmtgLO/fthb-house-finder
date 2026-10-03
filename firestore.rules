@@ -63,5 +63,19 @@ service cloud.firestore {
     match /lo_devices/{docId} {
       allow read, write: if false;
     }
+
+    // Staff Roster: Server-side Admin SDK read & write only (fail-closed, no direct client reads)
+    match /staff_roster/{emailId} {
+      allow read, write: if false;
+    }
+
+    // Structured Curation Requests & Device Tokens: Server-side only
+    match /lead_curation_requests/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /device_tokens/{leadId} {
+      allow read, write: if false;
+    }
   }
 }

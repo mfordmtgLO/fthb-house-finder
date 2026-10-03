@@ -8,13 +8,27 @@
  * R3. Branch Manager (admin + branch) - Branch-scoped lead read/write.
  * R4. Loan Officer (loan_officer + assignedLeads) - Assigned leads only.
  * R5. Compliance Auditor (auditor) - Strictly READ-ONLY everywhere, PII masked.
+ * 
+ * Firestore-managed Staff Roster in `staff_roster/{emailId}` with short 60s in-memory TTL cache,
+ * bootstrap provisioning, and 1-click server-side revocation.
  */
 
 import type { Request, Response, NextFunction } from 'express';
 import { getAdminFirestore } from './firebaseAdmin.ts';
-import { sanitizePiiInput } from './compliance.ts';
 
 export type StaffRole = 'master_admin' | 'admin' | 'loan_officer' | 'auditor';
+
+export interface StaffRosterDoc {
+  email: string;
+  role: StaffRole;
+  branch?: string;
+  assignedLeads?: string[];
+  expiresAt?: string; // ISO timestamp
+  isRevoked: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
 
 export interface StaffContext {
   uid: string;
@@ -22,7 +36,7 @@ export interface StaffContext {
   role: StaffRole;
   branch?: string;
   assignedLeads?: string[];
-  expiresAt?: string; // ISO timestamp
+  expiresAt?: string;
   isRevoked?: boolean;
 }
 
@@ -41,87 +55,184 @@ export interface StaffAuditEntry {
 // In-memory audit ledger store (mirrored to Firestore compliance_audit_ledger)
 const complianceAuditLedger: StaffAuditEntry[] = [];
 
-// Server-side staff allowlist & revocation registry
-export interface AllowlistEntry {
-  email: string;
-  role: StaffRole;
-  branch?: string;
-  assignedLeads?: string[];
-  expiresAt?: string;
-  isRevoked: boolean;
+// In-memory cache for staff roster (~60s TTL, invalidated on mutations)
+interface CachedRosterEntry {
+  doc: StaffRosterDoc;
+  fetchedAt: number;
 }
+const rosterCache = new Map<string, CachedRosterEntry>();
+const CACHE_TTL_MS = 60 * 1000;
 
-const staffAllowlist = new Map<string, AllowlistEntry>([
-  [
-    'fordmj@gmail.com',
-    {
-      email: 'fordmj@gmail.com',
-      role: 'master_admin',
-      isRevoked: false
-    }
-  ],
-  [
-    'auditor@fthb-compliance.internal',
-    {
-      email: 'auditor@fthb-compliance.internal',
-      role: 'auditor',
-      isRevoked: false
-    }
-  ],
-  [
-    'lo.sarah@vantage.internal',
-    {
-      email: 'lo.sarah@vantage.internal',
-      role: 'loan_officer',
-      assignedLeads: ['test-lead-rbac-001'],
-      isRevoked: false
-    }
-  ],
-  [
-    'bm.springfield@vantage.internal',
-    {
-      email: 'bm.springfield@vantage.internal',
-      role: 'admin',
-      branch: 'springfield',
-      isRevoked: false
-    }
-  ],
-  [
-    'it.tester@vantage.internal',
-    {
-      email: 'it.tester@vantage.internal',
-      role: 'admin',
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(), // 5 min grant
-      isRevoked: false
-    }
-  ]
-]);
-
-// Dynamic Revocation Management
-export function revokeStaffMember(email: string): boolean {
-  const normEmail = email.toLowerCase().trim();
-  const entry = staffAllowlist.get(normEmail);
-  if (entry) {
-    entry.isRevoked = true;
-    staffAllowlist.set(normEmail, entry);
-    return true;
+export function invalidateRosterCache(email?: string): void {
+  if (email) {
+    rosterCache.delete(email.toLowerCase().trim());
+  } else {
+    rosterCache.clear();
   }
-  return false;
 }
 
-export function restoreStaffMember(email: string): boolean {
+/**
+ * Resolves staff roster entry from Firestore staff_roster collection with cache & bootstrap.
+ * Fail closed: if Firestore is unavailable, returns null (never fails open).
+ */
+export async function getStaffRosterDoc(email: string): Promise<StaffRosterDoc | null> {
+  if (!email || typeof email !== 'string') return null;
   const normEmail = email.toLowerCase().trim();
-  const entry = staffAllowlist.get(normEmail);
-  if (entry) {
-    entry.isRevoked = false;
-    staffAllowlist.set(normEmail, entry);
-    return true;
+
+  // 1. Check TTL Cache
+  const cached = rosterCache.get(normEmail);
+  if (cached && (Date.now() - cached.fetchedAt < CACHE_TTL_MS)) {
+    return cached.doc;
   }
-  return false;
+
+  const db = getAdminFirestore();
+  if (!db) {
+    console.warn('[Staff Roster Warning] Firestore Admin DB unavailable — failing closed');
+    return null;
+  }
+
+  try {
+    const docSnap = await db.collection('staff_roster').doc(normEmail).get();
+    if (docSnap.exists) {
+      const data = docSnap.data() as StaffRosterDoc;
+      rosterCache.set(normEmail, { doc: data, fetchedAt: Date.now() });
+      return data;
+    }
+
+    // Check if roster is empty for initial system bootstrap
+    const allRosterSnap = await db.collection('staff_roster').limit(2).get();
+    if (allRosterSnap.empty) {
+      const bootstrapEmail = (process.env.MIKE_STAFF_EMAIL || 'fordmj@gmail.com').toLowerCase().trim();
+      if (bootstrapEmail && normEmail === bootstrapEmail) {
+        const bootstrapDoc: StaffRosterDoc = {
+          email: bootstrapEmail,
+          role: 'master_admin',
+          isRevoked: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: 'system_bootstrap'
+        };
+
+        await db.collection('staff_roster').doc(bootstrapEmail).set(bootstrapDoc);
+        console.log(`[Staff Roster Bootstrap] Initialized master_admin for ${bootstrapEmail}`);
+
+        await recordStaffAudit({
+          actor: 'system_bootstrap',
+          role: 'master_admin',
+          action: 'BOOTSTRAP_STAFF_ROSTER',
+          outcome: 'ALLOWED',
+          metadata: { bootstrapEmail }
+        });
+
+        rosterCache.set(bootstrapEmail, { doc: bootstrapDoc, fetchedAt: Date.now() });
+        return bootstrapDoc;
+      }
+    }
+
+    return null;
+  } catch (err: any) {
+    console.error('[Staff Roster Lookup Error]', err.message);
+    return null;
+  }
 }
 
-export function upsertStaffAllowlist(entry: AllowlistEntry): void {
-  staffAllowlist.set(entry.email.toLowerCase().trim(), entry);
+/**
+ * Upserts a staff roster document in Firestore (master_admin only)
+ */
+export async function upsertStaffRosterDoc(
+  entry: {
+    email: string;
+    role: StaffRole;
+    branch?: string;
+    assignedLeads?: string[];
+    expiresAt?: string;
+    isRevoked?: boolean;
+  },
+  actorEmail: string
+): Promise<StaffRosterDoc> {
+  const normEmail = entry.email.toLowerCase().trim();
+  const db = getAdminFirestore();
+  if (!db) throw new Error('Firestore service unavailable');
+
+  const existing = await getStaffRosterDoc(normEmail);
+  const now = new Date().toISOString();
+
+  const docData: StaffRosterDoc = {
+    email: normEmail,
+    role: entry.role,
+    branch: entry.branch || existing?.branch,
+    assignedLeads: entry.assignedLeads || existing?.assignedLeads,
+    expiresAt: entry.expiresAt || existing?.expiresAt,
+    isRevoked: entry.isRevoked !== undefined ? entry.isRevoked : (existing?.isRevoked ?? false),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    createdBy: existing?.createdBy || actorEmail
+  };
+
+  await db.collection('staff_roster').doc(normEmail).set(docData, { merge: true });
+  invalidateRosterCache(normEmail);
+  rosterCache.set(normEmail, { doc: docData, fetchedAt: Date.now() });
+  return docData;
+}
+
+/**
+ * 1-Click Revocation: sets isRevoked = true in Firestore (immediate effect)
+ */
+export async function revokeStaffRosterDoc(email: string, _actorEmail: string): Promise<boolean> {
+  const normEmail = email.toLowerCase().trim();
+  const db = getAdminFirestore();
+  if (!db) return false;
+
+  try {
+    await db.collection('staff_roster').doc(normEmail).set({
+      isRevoked: true,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    invalidateRosterCache(normEmail);
+    return true;
+  } catch (err: any) {
+    console.error('[Staff Revocation Error]', err.message);
+    return false;
+  }
+}
+
+/**
+ * Restores staff member access in Firestore
+ */
+export async function restoreStaffRosterDoc(email: string, _actorEmail: string): Promise<boolean> {
+  const normEmail = email.toLowerCase().trim();
+  const db = getAdminFirestore();
+  if (!db) return false;
+
+  try {
+    await db.collection('staff_roster').doc(normEmail).set({
+      isRevoked: false,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    invalidateRosterCache(normEmail);
+    return true;
+  } catch (err: any) {
+    console.error('[Staff Restore Error]', err.message);
+    return false;
+  }
+}
+
+/**
+ * Lists all staff roster members (PII-minimal)
+ */
+export async function listStaffRoster(_actorEmail: string): Promise<StaffRosterDoc[]> {
+  const db = getAdminFirestore();
+  if (!db) return [];
+
+  try {
+    const snap = await db.collection('staff_roster').get();
+    return snap.docs.map(d => d.data() as StaffRosterDoc);
+  } catch (err: any) {
+    console.error('[List Staff Roster Error]', err.message);
+    return [];
+  }
 }
 
 /**
@@ -201,107 +312,45 @@ export function maskBuyerPii(data: any, staff: StaffContext): any {
 
 /**
  * Token Verification Helper
- * Supports Firebase ID tokens and structured test tokens for synthetic test automation.
+ * Verifies Bearer tokens against the Firestore staff roster.
  */
-export function verifyStaffToken(authHeader: string | undefined): StaffContext | { error: string; code: number } {
+export async function verifyStaffToken(authHeader: string | undefined): Promise<StaffContext | { error: string; code: number }> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return { error: 'Missing or malformed Authorization header', code: 401 };
   }
 
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-
-  // Test Fixture Token Resolution
-  if (token.startsWith('test-token-')) {
-    const tokenType = token.replace('test-token-', '');
-    
-    if (tokenType === 'master-admin') {
-      return {
-        uid: 'uid-mike-ford-master',
-        email: 'fordmj@gmail.com',
-        role: 'master_admin'
-      };
-    }
-    if (tokenType === 'auditor') {
-      return {
-        uid: 'uid-auditor-001',
-        email: 'auditor@fthb-compliance.internal',
-        role: 'auditor'
-      };
-    }
-    if (tokenType === 'lo-assigned') {
-      return {
-        uid: 'uid-lo-sarah',
-        email: 'lo.sarah@vantage.internal',
-        role: 'loan_officer',
-        assignedLeads: ['test-lead-rbac-001']
-      };
-    }
-    if (tokenType === 'branch-mgr-springfield') {
-      return {
-        uid: 'uid-bm-springfield',
-        email: 'bm.springfield@vantage.internal',
-        role: 'admin',
-        branch: 'springfield'
-      };
-    }
-    if (tokenType === 'it-tester-valid') {
-      return {
-        uid: 'uid-it-tester',
-        email: 'it.tester@vantage.internal',
-        role: 'admin',
-        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
-      };
-    }
-    if (tokenType === 'it-tester-expired') {
-      return {
-        uid: 'uid-it-tester',
-        email: 'it.tester@vantage.internal',
-        role: 'admin',
-        expiresAt: new Date(Date.now() - 5 * 60 * 1000).toISOString() // Expired 5 mins ago
-      };
-    }
-    if (tokenType === 'revoked') {
-      return {
-        uid: 'uid-revoked-user',
-        email: 'revoked.staff@vantage.internal',
-        role: 'loan_officer',
-        isRevoked: true
-      };
-    }
+  const rawToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (!rawToken) {
+    return { error: 'Empty token supplied', code: 401 };
   }
 
-  // Allowlist & Custom Claims Lookup by token or email format
-  // Check if token represents an email or custom claim payload
   try {
-    let email = token.toLowerCase();
-    if (token.includes('@')) {
-      email = token.toLowerCase();
-    }
+    const email = rawToken.toLowerCase().trim();
+    const rosterEntry = await getStaffRosterDoc(email);
 
-    const allowlistEntry = staffAllowlist.get(email);
-    if (!allowlistEntry) {
+    if (!rosterEntry) {
       return { error: 'Staff credentials not recognized or not on allowlist', code: 401 };
     }
 
-    if (allowlistEntry.isRevoked) {
+    if (rosterEntry.isRevoked) {
       return { error: 'Staff access has been revoked', code: 401 };
     }
 
-    if (allowlistEntry.expiresAt && new Date(allowlistEntry.expiresAt).getTime() < Date.now()) {
+    if (rosterEntry.expiresAt && new Date(rosterEntry.expiresAt).getTime() < Date.now()) {
       return { error: 'Timed staff grant has expired', code: 401 };
     }
 
     return {
-      uid: `uid-${allowlistEntry.email}`,
-      email: allowlistEntry.email,
-      role: allowlistEntry.role,
-      branch: allowlistEntry.branch,
-      assignedLeads: allowlistEntry.assignedLeads,
-      expiresAt: allowlistEntry.expiresAt,
-      isRevoked: allowlistEntry.isRevoked
+      uid: `uid-${rosterEntry.email}`,
+      email: rosterEntry.email,
+      role: rosterEntry.role,
+      branch: rosterEntry.branch,
+      assignedLeads: rosterEntry.assignedLeads,
+      expiresAt: rosterEntry.expiresAt,
+      isRevoked: rosterEntry.isRevoked
     };
   } catch {
-    return { error: 'Invalid token format', code: 401 };
+    return { error: 'Invalid token format or roster lookup error', code: 401 };
   }
 }
 
@@ -349,20 +398,26 @@ export function requireStaffRole(...allowedRoles: StaffRole[]) {
       return;
     }
 
-    // 3. Verify Staff Token
-    const verifyResult = verifyStaffToken(authHeader);
+    // 3. Verify Staff Token asynchronously from Firestore roster
+    const verifyResult = await verifyStaffToken(authHeader);
     if ('error' in verifyResult) {
       await recordStaffAudit({
-        actor: 'anonymous',
+        actor: authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : 'anonymous',
         role: 'auditor',
         action: `${req.method} ${req.path}`,
         outcome: 'DENIED',
         metadata: { reason: verifyResult.error }
       });
 
+      const errorCode = verifyResult.error.includes('expired')
+        ? 'TOKEN_EXPIRED'
+        : verifyResult.error.includes('revoked')
+        ? 'STAFF_REVOKED'
+        : 'FAIL_CLOSED_AUTH_REQUIRED';
+
       res.status(verifyResult.code).json({
         error: verifyResult.error,
-        code: 'FAIL_CLOSED_AUTH_REQUIRED'
+        code: errorCode
       });
       return;
     }

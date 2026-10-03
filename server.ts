@@ -18,8 +18,10 @@ import {
   recordStaffAudit,
   maskBuyerPii,
   getComplianceAuditLedger,
-  revokeStaffMember,
-  restoreStaffMember,
+  upsertStaffRosterDoc,
+  revokeStaffRosterDoc,
+  restoreStaffRosterDoc,
+  listStaffRoster,
   type StaffContext
 } from './src/server/rbac.ts';
 import {
@@ -684,8 +686,72 @@ app.get('/api/lo/audit-ledger', requireStaffRole('master_admin', 'auditor'), asy
   });
 });
 
-// 9e. 1-Click Staff Revocation (master_admin ONLY)
-app.post('/api/lo/staff/revoke', requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
+// 9e. Staff Roster Provisioning & Updates (master_admin ONLY)
+app.post('/api/staff/roster', requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+  const { email, role, branch, assignedLeads, expiresAt, isRevoked } = req.body;
+
+  if (!email || typeof email !== 'string' || !role) {
+    res.status(400).json({ error: 'email and role are required' });
+    return;
+  }
+
+  const validRoles = ['master_admin', 'admin', 'loan_officer', 'auditor'];
+  if (!validRoles.includes(role)) {
+    res.status(400).json({ error: `Invalid role. Allowed roles: ${validRoles.join(', ')}` });
+    return;
+  }
+
+  try {
+    const updated = await upsertStaffRosterDoc(
+      { email, role, branch, assignedLeads, expiresAt, isRevoked },
+      staff.email
+    );
+
+    await recordStaffAudit({
+      actor: staff.email,
+      role: staff.role,
+      action: 'UPSERT_STAFF_ROSTER',
+      outcome: 'ALLOWED',
+      metadata: { targetEmail: email, role, branch }
+    });
+
+    res.json({
+      success: true,
+      staff: updated
+    });
+  } catch (err: any) {
+    console.error('[Staff Roster Upsert Error]', err.message);
+    res.status(500).json({ error: 'Failed to update staff roster' });
+  }
+});
+
+// 9f. Staff Roster Listing (master_admin ONLY)
+app.get('/api/staff/roster', requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
+  const staff = (req as any).staff as StaffContext;
+
+  try {
+    const roster = await listStaffRoster(staff.email);
+
+    await recordStaffAudit({
+      actor: staff.email,
+      role: staff.role,
+      action: 'LIST_STAFF_ROSTER',
+      outcome: 'ALLOWED'
+    });
+
+    res.json({
+      totalCount: roster.length,
+      staff: roster
+    });
+  } catch (err: any) {
+    console.error('[Staff Roster List Error]', err.message);
+    res.status(500).json({ error: 'Failed to list staff roster' });
+  }
+});
+
+// 9g. 1-Click Staff Revocation (master_admin ONLY)
+app.post(['/api/staff/revoke', '/api/lo/staff/revoke'], requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
   const staff = (req as any).staff as StaffContext;
   const { email } = req.body;
 
@@ -694,7 +760,7 @@ app.post('/api/lo/staff/revoke', requireStaffRole('master_admin'), async (req: R
     return;
   }
 
-  const revoked = revokeStaffMember(email);
+  const revoked = await revokeStaffRosterDoc(email, staff.email);
 
   await recordStaffAudit({
     actor: staff.email,
@@ -705,14 +771,14 @@ app.post('/api/lo/staff/revoke', requireStaffRole('master_admin'), async (req: R
   });
 
   res.json({
-    success: true,
+    success: revoked,
     email,
     status: 'REVOKED'
   });
 });
 
-// 9f. Staff Access Restoration (master_admin ONLY)
-app.post('/api/lo/staff/restore', requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
+// 9h. Staff Access Restoration (master_admin ONLY)
+app.post(['/api/staff/restore', '/api/lo/staff/restore'], requireStaffRole('master_admin'), async (req: Request, res: Response): Promise<void> => {
   const staff = (req as any).staff as StaffContext;
   const { email } = req.body;
 
@@ -721,7 +787,7 @@ app.post('/api/lo/staff/restore', requireStaffRole('master_admin'), async (req: 
     return;
   }
 
-  const restored = restoreStaffMember(email);
+  const restored = await restoreStaffRosterDoc(email, staff.email);
 
   await recordStaffAudit({
     actor: staff.email,
@@ -732,7 +798,7 @@ app.post('/api/lo/staff/restore', requireStaffRole('master_admin'), async (req: 
   });
 
   res.json({
-    success: true,
+    success: restored,
     email,
     status: 'ACTIVE'
   });

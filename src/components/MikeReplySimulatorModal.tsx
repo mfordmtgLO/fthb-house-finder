@@ -175,55 +175,31 @@ export const MikeReplySimulatorModal: React.FC<MikeReplySimulatorModalProps> = (
               <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-slate-300 text-[11px] font-medium">
-                    Select Staff Role / ID Token:
+                    Staff Identity / Role Token:
                   </label>
-                  <span className="text-[10px] text-amber-400 font-mono">RBAC Active</span>
+                  <span className="text-[10px] text-amber-400 font-mono">Firestore Roster Active</span>
                 </div>
-                <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setStaffEmail('fordmj@gmail.com')}
-                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
-                      staffEmail === 'fordmj@gmail.com'
-                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    👑 Mike Ford (Master Admin)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStaffEmail('lo.sarah@vantage.internal')}
-                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
-                      staffEmail === 'lo.sarah@vantage.internal'
-                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    📋 Sarah (Loan Officer)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStaffEmail('bm.springfield@vantage.internal')}
-                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
-                      staffEmail === 'bm.springfield@vantage.internal'
-                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    🏢 Branch Mgr (Springfield)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStaffEmail('auditor@fthb-compliance.internal')}
-                    className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
-                      staffEmail === 'auditor@fthb-compliance.internal'
-                        ? 'bg-amber-500/20 border-amber-400 text-white font-bold'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    🔍 Auditor (Read-Only)
-                  </button>
+                <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    value={staffEmail}
+                    onChange={(e) => setStaffEmail(e.target.value)}
+                    placeholder="Enter staff email (e.g. fordmj@gmail.com)"
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 font-mono"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStaffEmail('fordmj@gmail.com')}
+                      className={`px-2 py-1 rounded-md text-[10px] border transition-all ${
+                        staffEmail === 'fordmj@gmail.com'
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      👑 Mike Ford (Master Admin)
+                    </button>
+                  </div>
                 </div>
               </div>
 

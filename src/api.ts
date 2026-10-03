@@ -291,3 +291,70 @@ export async function fetchMikeInbox(token?: string): Promise<{
   return res.json();
 }
 
+export async function fetchStaffRoster(token?: string): Promise<{
+  totalCount: number;
+  staff: any[];
+}> {
+  const authToken = token || 'fordmj@gmail.com';
+  const res = await fetch('/api/staff/roster', {
+    headers: {
+      'Authorization': `Bearer ${authToken}`
+    }
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch staff roster');
+  }
+
+  return res.json();
+}
+
+export async function upsertStaffRoster(
+  entry: {
+    email: string;
+    role: string;
+    branch?: string;
+    assignedLeads?: string[];
+    expiresAt?: string;
+    isRevoked?: boolean;
+  },
+  token?: string
+): Promise<any> {
+  const authToken = token || 'fordmj@gmail.com';
+  const res = await fetch('/api/staff/roster', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`
+    },
+    body: JSON.stringify(entry)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update staff roster');
+  }
+
+  return res.json();
+}
+
+export async function revokeStaff(email: string, token?: string): Promise<any> {
+  const authToken = token || 'fordmj@gmail.com';
+  const res = await fetch('/api/staff/revoke', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`
+    },
+    body: JSON.stringify({ email })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to revoke staff access');
+  }
+
+  return res.json();
+}
+
