@@ -23,7 +23,7 @@ import { PwaInstallGuideModal } from './components/PwaInstallGuideModal';
 import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
 import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
 import { IdentifyModal } from './components/IdentifyModal';
-import BuyerIntakeChatbot from './components/BuyerIntakeChatbot';
+import LeadIntakeChatbot from './components/LeadIntakeChatbot';
 import {
   Home,
   ShieldCheck,
@@ -709,11 +709,15 @@ export default function App() {
         />
       )}
 
-      <BuyerIntakeChatbot
+      <LeadIntakeChatbot
         leadId={leadId}
         pairing={pairing}
-        onIntakeCompleted={() => {
+        isSidebarOpen={isSidebarOpen}
+        onSaveLead={() => {
           loadBuyerCurations(leadId);
+        }}
+        onExploreListings={() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
     </div>

@@ -15,7 +15,7 @@ import {
   ExternalLink,
   X
 } from 'lucide-react';
-import { ChatMessage, CuratedListing } from '../types';
+import { ChatMessage, CuratedListing, MIKE_FORD_LO_PROFILE } from '../types';
 import { sendMuseChatMessage, fetchMuseChatHistory } from '../api';
 
 interface MuseSidebarProps {
@@ -51,7 +51,14 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
   const [dailyCapReached, setDailyCapReached] = useState(false);
   const [incomeSliderIndex, setIncomeSliderIndex] = useState(1); // default $60k-$85k
   const [showIntakeForm, setShowIntakeForm] = useState(false);
+  const [loImgError, setLoImgError] = useState(false);
+  const [agentImgError, setAgentImgError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const loName = pairing?.lo?.name || MIKE_FORD_LO_PROFILE.name;
+  const loPhoto = pairing?.lo?.photoUrl || MIKE_FORD_LO_PROFILE.photoUrl;
+  const agentName = pairing?.agent?.name || '';
+  const agentPhoto = pairing?.agent?.photoUrl;
 
   // Load chat history for persistent buyer memory
   useEffect(() => {
@@ -70,6 +77,27 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  // Prevent background scrolling on mobile when Muse sidebar is open
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined' || typeof window === 'undefined') return;
+
+    if (window.innerWidth < 1024) {
+      const originalBodyOverflow = document.body.style.overflow;
+      const originalBodyOverscroll = document.body.style.overscrollBehavior;
+      const originalHtmlOverflow = document.documentElement.style.overflow;
+
+      document.body.style.overflow = 'hidden';
+      document.body.style.overscrollBehavior = 'none';
+      document.documentElement.style.overflow = 'hidden';
+
+      return () => {
+        document.body.style.overflow = originalBodyOverflow;
+        document.body.style.overscrollBehavior = originalBodyOverscroll;
+        document.documentElement.style.overflow = originalHtmlOverflow;
+      };
+    }
+  }, [isOpen]);
 
   const handleSend = async (customText?: string) => {
     const textToSend = (customText || inputMessage).trim();
@@ -127,9 +155,39 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
       {/* Sidebar Header */}
       <div className="shrink-0 p-3.5 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center space-x-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 shrink-0">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
+          {pairing?.agent && agentPhoto && !agentImgError ? (
+            <div className="relative flex items-center shrink-0 w-8 h-8">
+              {loPhoto && !loImgError ? (
+                <img
+                  src={loPhoto}
+                  alt={loName}
+                  onError={() => setLoImgError(true)}
+                  className="w-7 h-7 rounded-lg object-cover ring-2 ring-slate-900 z-10 shrink-0"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-lg bg-cyan-600 flex items-center justify-center ring-2 ring-slate-900 z-10 shrink-0 text-white font-bold text-[10px]">
+                  {loName.charAt(0)}
+                </div>
+              )}
+              <img
+                src={agentPhoto}
+                alt={agentName}
+                onError={() => setAgentImgError(true)}
+                className="w-7 h-7 rounded-lg object-cover ring-2 ring-slate-900 -ml-3 z-0 shrink-0"
+              />
+            </div>
+          ) : loPhoto && !loImgError ? (
+            <img
+              src={loPhoto}
+              alt={loName}
+              onError={() => setLoImgError(true)}
+              className="w-8 h-8 rounded-xl object-cover shrink-0 ring-1 ring-slate-700"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 shrink-0">
+              <Sparkles className="w-4 h-4 text-white" />
+            </div>
+          )}
           <div className="min-w-0">
             <div className="flex items-center space-x-1.5">
               <h2 className="text-sm font-bold text-white truncate">Muse AI Assistant</h2>

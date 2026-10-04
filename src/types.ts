@@ -106,6 +106,16 @@ export interface LoanOfficerProfile {
   company: string;
 }
 
+export const MIKE_FORD_LO_PROFILE: LoanOfficerProfile = {
+  name: 'Mike Ford',
+  title: 'Senior Mortgage Loan Officer',
+  nmlsId: '288455',
+  phone: '',
+  email: 'fordmj@gmail.com',
+  photoUrl: '',
+  company: 'Pacific Lending Group'
+};
+
 export interface PropertyNoteMessage {
   id: string;
   sender: 'buyer' | 'lo' | 'agent' | 'muse';

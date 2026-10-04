@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
 import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
-import { MessageSquare, X, ChevronRight, Check, ShieldCheck, Sparkles, Send, User, Phone, Mail, ArrowRight } from 'lucide-react';
+import { MessageSquare, X, Minus, ChevronRight, Check, ShieldCheck, Sparkles, Send, User, Phone, Mail, ArrowRight } from 'lucide-react';
 import { submitIntakeLead } from '../api.ts';
+import { MIKE_FORD_LO_PROFILE } from '../types.ts';
 
 interface BuyerIntakeChatbotProps {
   leadId: string;
@@ -60,9 +61,33 @@ export default function BuyerIntakeChatbot({ leadId, pairing, onIntakeCompleted 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentStep, isSubmitted]);
 
-  const loName = pairing?.lo?.name || 'Mike Ford';
-  const loNmls = pairing?.lo?.nmlsId || '288455';
+  // Prevent background scrolling when chatbot is open in mobile or desktop view
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined') return;
+
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalBodyOverscroll = document.body.style.overscrollBehavior;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+    document.documentElement.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = originalBodyOverflow;
+      document.body.style.overscrollBehavior = originalBodyOverscroll;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+    };
+  }, [isOpen]);
+
+  const [loImgError, setLoImgError] = useState(false);
+  const [agentImgError, setAgentImgError] = useState(false);
+
+  const loName = pairing?.lo?.name || MIKE_FORD_LO_PROFILE.name;
+  const loPhoto = pairing?.lo?.photoUrl || MIKE_FORD_LO_PROFILE.photoUrl;
+  const loNmls = pairing?.lo?.nmlsId || MIKE_FORD_LO_PROFILE.nmlsId;
   const agentName = pairing?.agent?.name || '';
+  const agentPhoto = pairing?.agent?.photoUrl;
   const agentBrokerage = pairing?.agent?.brokerage || '';
   const isCoBranded = Boolean(pairing && pairing.agent);
 
@@ -171,10 +196,10 @@ export default function BuyerIntakeChatbot({ leadId, pairing, onIntakeCompleted 
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 font-sans">
+    <div className="fixed bottom-6 left-6 z-50 font-sans">
       {/* Proactive Teaser Bubble */}
       {!isOpen && showTeaser && (
-        <div className="absolute bottom-16 right-0 mb-2 w-80 bg-slate-900 border border-cyan-500/40 rounded-2xl p-4 shadow-2xl text-white animate-fade-in transition-all">
+        <div className="absolute bottom-16 left-0 mb-2 w-80 bg-slate-900 border border-cyan-500/40 rounded-2xl p-4 shadow-2xl text-white animate-fade-in transition-all">
           <div className="flex items-start justify-between mb-1">
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
