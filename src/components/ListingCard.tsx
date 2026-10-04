@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import {
   Heart,
   MapPin,
@@ -55,7 +56,12 @@ export const ListingCard: React.FC<ListingCardProps> = ({
   const currentPhoto = photos[activePhotoIndex] || listing.photoUrl;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden shadow-xl transition-all flex flex-col group">
+    <motion.div
+      initial={{ opacity: 0, y: 16, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
+      className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden shadow-xl transition-all flex flex-col group"
+    >
       {/* Photo Header & Badges */}
       <div className="relative aspect-[16/10] bg-slate-950 overflow-hidden">
         {currentPhoto ? (
@@ -311,6 +317,6 @@ export const ListingCard: React.FC<ListingCardProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
