@@ -22,6 +22,7 @@ interface MuseSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   leadId: string;
+  pairing?: any;
   onSelectListing: (listing: CuratedListing) => void;
   onOpenBuydown: () => void;
   onOpenMikeSchedule: () => void;
@@ -39,6 +40,7 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
   isOpen,
   onClose,
   leadId,
+  pairing,
   onSelectListing,
   onOpenBuydown,
   onOpenMikeSchedule
@@ -136,7 +138,9 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 truncate">
-              Coached by Mike Ford (NMLS #288455)
+              {pairing
+                ? `Working with ${pairing.lo.name} & ${pairing.agent.name} (${pairing.agent.brokerage})`
+                : 'Coached by Mike Ford (NMLS #288455)'}
             </p>
           </div>
         </div>

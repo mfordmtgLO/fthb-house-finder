@@ -9,7 +9,7 @@ export interface AuditLedgerEntry {
   id: string;
   timestamp: string;
   leadId: string;
-  actionType: 'TCPA_OPT_IN' | 'DISCLAIMER_SERVED' | 'PROPERTY_NOTE' | 'MUSE_CHAT_QUESTION' | 'ALERT_OPT_IN';
+  actionType: 'TCPA_OPT_IN' | 'DISCLAIMER_SERVED' | 'PROPERTY_NOTE' | 'MUSE_CHAT_QUESTION' | 'ALERT_OPT_IN' | 'OUTREACH_ACCEPTED' | 'OUTREACH_OFFER_MADE' | 'PLUGIN_INTAKE_SUBMITTED';
   propertyId?: string;
   ipAddress: string;
   redactedPayload: Record<string, unknown>;

@@ -23,6 +23,7 @@ import { PwaInstallGuideModal } from './components/PwaInstallGuideModal';
 import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
 import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
 import { IdentifyModal } from './components/IdentifyModal';
+import BuyerIntakeChatbot from './components/BuyerIntakeChatbot';
 import {
   Home,
   ShieldCheck,
@@ -42,6 +43,7 @@ import {
 export default function App() {
   const [leadId, setLeadId] = useState<string>('');
   const [buyerEmail, setBuyerEmail] = useState<string>('');
+  const [pairing, setPairing] = useState<any | null>(null);
   const [disclaimerServed, setDisclaimerServed] = useState<boolean>(false);
   const [pluginStatus, setPluginStatus] = useState<'active' | 'suspended' | 'killed'>('active');
   const [pluginReason, setPluginReason] = useState<string>('');
@@ -95,6 +97,9 @@ export default function App() {
       .then(session => {
         setLeadId(session.leadId);
         setDisclaimerServed(session.disclaimerServed);
+        if (session.pairing) {
+          setPairing(session.pairing);
+        }
         if (session.statedPreferences?.favorites) {
           setFavorites(session.statedPreferences.favorites);
         }
@@ -295,6 +300,7 @@ export default function App() {
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           leadId={leadId}
+          pairing={pairing}
           onSelectListing={(listing) => {
             setNotesListing(listing);
           }}
@@ -621,6 +627,7 @@ export default function App() {
         <PropertyNotesModal
           listing={notesListing}
           leadId={leadId}
+          pairing={pairing}
           onClose={() => setNotesListing(null)}
         />
       )}
@@ -701,6 +708,14 @@ export default function App() {
           }}
         />
       )}
+
+      <BuyerIntakeChatbot
+        leadId={leadId}
+        pairing={pairing}
+        onIntakeCompleted={() => {
+          loadBuyerCurations(leadId);
+        }}
+      />
     </div>
   );
 }

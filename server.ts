@@ -11,6 +11,7 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
+import { getPairingDetails } from './src/server/agentPairings.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './src/server/firebaseAdmin.ts';
 import {
   requireBuyerSession,
@@ -45,7 +46,7 @@ import {
   rateLimitLeads,
   rateLimitSensitive
 } from './src/server/rateLimiter.ts';
-import { sanitizePiiInput, getAuditLedger } from './src/server/compliance.ts';
+import { sanitizePiiInput, getAuditLedger, recordAuditLedger } from './src/server/compliance.ts';
 import { getMikeDeviceTokens } from './src/server/deviceTokens.ts';
 import {
   getPluginOperationalState,
@@ -141,6 +142,17 @@ function requirePluginOperational(req: Request, res: Response, next: NextFunctio
 // API Endpoints
 // -----------------------------------------------------------------------------
 
+// Get Co-Branded Pairing Details
+app.get('/api/pairing/:pairingId', async (req: Request, res: Response): Promise<void> => {
+  const { pairingId } = req.params;
+  const pairing = await getPairingDetails(pairingId);
+  if (!pairing) {
+    res.status(404).json({ error: 'Pairing not found or inactive', code: 'PAIRING_NOT_FOUND' });
+    return;
+  }
+  res.json(pairing);
+});
+
 // 1. Buyer Session Initialization & Intake (Tier 2 Rate Limit: 20 leads / 15 min)
 app.post('/api/auth/session', async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
@@ -159,12 +171,12 @@ app.post('/api/auth/session', async (req: Request, res: Response): Promise<void>
     console.warn('[Plugin Heartbeat] Session init sync error:', err.message);
   });
 
-  const existingLeadId = req.body.leadId;
+  const { leadId: existingLeadId, pairingId } = req.body;
   const leadId = (existingLeadId && typeof existingLeadId === 'string' && existingLeadId.length > 5)
     ? existingLeadId
     : `lead-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-  const session = await getOrCreateBuyerSession(leadId, ip);
+  const session = await getOrCreateBuyerSession(leadId, ip, pairingId);
   const opState = getPluginOperationalState();
 
   res.json({
@@ -173,6 +185,7 @@ app.post('/api/auth/session', async (req: Request, res: Response): Promise<void>
     disclaimerText: session.messages[0]?.text || '',
     statedPreferences: session.statedPreferences,
     messagesCount: session.messages.length,
+    pairing: session.pairing || null,
     pluginStatus: opState.status,
     killAll: opState.killAll,
     operational: opState.operational
@@ -282,6 +295,66 @@ app.get('/api/plugin/status', async (_req: Request, res: Response): Promise<void
     operational: opState.operational,
     reason: opState.reason
   });
+});
+
+// 1c-2. Plugin Intake Lead Submission Endpoint
+app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
+  const { leadId, name, email, phone, intakeAnswers, smsConsentAuthorized, smsConsentTimestamp, pairingId, campaignTag } = req.body;
+  if (!name || !email || !phone) {
+    res.status(400).json({ error: 'Name, email, and phone required' });
+    return;
+  }
+
+  const safeName = sanitizePiiInput(name);
+  const normalizedEmail = email.toLowerCase().trim();
+  const safePhone = sanitizePiiInput(phone);
+
+  const db = getAdminFirestore();
+  if (!db) {
+    res.status(503).json({ error: 'Firestore service unavailable', code: 'FIRESTORE_UNAVAILABLE' });
+    return;
+  }
+
+  try {
+    const targetLeadId = leadId || `lead-${Date.now()}`;
+    const leadRecord = {
+      leadId: targetLeadId,
+      name: safeName,
+      email: normalizedEmail,
+      phone: safePhone,
+      intakeAnswers: intakeAnswers || {},
+      smsConsentAuthorized: Boolean(smsConsentAuthorized),
+      smsConsentTimestamp: smsConsentAuthorized ? (smsConsentTimestamp || new Date().toISOString()) : null,
+      pairingId: pairingId || null,
+      campaignTag: campaignTag || '',
+      createdAt: new Date().toISOString(),
+      source: 'plugin-chatbot'
+    };
+
+    await safeFirestoreWrite(db.collection('plugin_leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
+    await safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
+
+    if (intakeAnswers?.sampleHomesWanted && intakeAnswers?.location) {
+      await safeFirestoreWrite(db.collection('lead_curations').doc(targetLeadId).set({
+        leadId: targetLeadId,
+        status: 'requested',
+        city: intakeAnswers.location,
+        requestedAt: new Date().toISOString()
+      }, { merge: true }), 2000);
+    }
+
+    recordAuditLedger({
+      leadId: targetLeadId,
+      actionType: 'PLUGIN_INTAKE_SUBMITTED',
+      ipAddress: getClientIp(req),
+      redactedPayload: { name: safeName, email: normalizedEmail, smsConsent: Boolean(smsConsentAuthorized) }
+    });
+
+    res.json({ success: true, leadId: targetLeadId });
+  } catch (err: any) {
+    console.error('[Plugin Intake Error]', err.message);
+    res.status(500).json({ error: 'Intake submission failed' });
+  }
 });
 
 // 1d. Internal Test / Mock Control Plane Simulation Endpoint

@@ -22,12 +22,14 @@ import { fetchPropertyThread, postPropertyNote } from '../api';
 interface PropertyNotesModalProps {
   listing: CuratedListing | null;
   leadId: string;
+  pairing?: any;
   onClose: () => void;
 }
 
 export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
   listing,
   leadId,
+  pairing,
   onClose
 }) => {
   const [thread, setThread] = useState<PropertyThread | null>(null);
@@ -406,6 +408,21 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
           </div>
         </form>
       </div>
+
+      {pairing && (
+        <div className="shrink-0 p-3 bg-slate-800 border-t border-slate-700/60 flex items-center justify-between text-xs text-slate-300">
+          <div className="flex items-center space-x-2">
+            <Building2 className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>Your paired agent: <strong className="text-white">{pairing.agent.name}</strong> ({pairing.agent.brokerage})</span>
+          </div>
+          {pairing.agent.phone && (
+            <a href={`tel:${pairing.agent.phone}`} className="text-cyan-400 hover:underline flex items-center space-x-1">
+              <Phone className="w-3.5 h-3.5" />
+              <span>{pairing.agent.phone}</span>
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 };

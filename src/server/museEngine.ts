@@ -13,6 +13,7 @@ import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAuditLedger } from './compliance.ts';
 import { calculateCostOfWaiting, formatCostOfWaitingForMuse } from './costOfWaiting.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './firebaseAdmin.ts';
+import { getPairingDetails, type PairingDetails } from './agentPairings.ts';
 
 export interface ChatMessage {
   id: string;
@@ -35,6 +36,8 @@ export interface BuyerSessionState {
   email?: string;
   phone?: string;
   assignedLo?: string;
+  pairing?: PairingDetails | null;
+  awaitingOutreach?: { teamMember: string; intent: 'PROPERTY' | 'FINANCING' } | null;
   leadCurationRequest?: {
     status: 'requested' | 'pushed';
     city: string;
@@ -97,6 +100,7 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
       email: session.email,
       phone: session.phone,
       assignedLo: session.assignedLo,
+      pairing: session.pairing || null,
       leadCurationRequest: session.leadCurationRequest,
       statedPreferences: session.statedPreferences,
       messages: sanitizedMessages,
@@ -152,6 +156,7 @@ async function loadConversationFromFirestore(leadId: string): Promise<BuyerSessi
       email: data.email,
       phone: data.phone,
       assignedLo: data.assignedLo,
+      pairing: data.pairing || null,
       leadCurationRequest: data.leadCurationRequest,
       statedPreferences: data.statedPreferences || { favorites: [], viewedListingIds: [] },
       messages: Array.isArray(data.messages)
@@ -180,7 +185,7 @@ async function loadConversationFromFirestore(leadId: string): Promise<BuyerSessi
  * Loads history from Firestore on session start.
  * Falls back to a new session only when none exists in Firestore.
  */
-export async function getOrCreateBuyerSession(leadId: string, ipAddress: string): Promise<BuyerSessionState> {
+export async function getOrCreateBuyerSession(leadId: string, ipAddress: string, pairingId?: string): Promise<BuyerSessionState> {
   // 1. Load history from Firestore first (source of truth)
   let session = await loadConversationFromFirestore(leadId);
 
@@ -189,14 +194,28 @@ export async function getOrCreateBuyerSession(leadId: string, ipAddress: string)
     session = sessionCache.get(leadId)!;
   }
 
+  if (pairingId && !session?.pairing) {
+    const pairing = await getPairingDetails(pairingId);
+    if (pairing) {
+      if (session) {
+        session.pairing = pairing;
+      }
+    }
+  }
+
   // 3. Fallback to a new session only when none exists
   if (!session) {
+    let initialPairing = null;
+    if (pairingId) {
+      initialPairing = await getPairingDetails(pairingId);
+    }
     session = {
       leadId,
       createdAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
       disclaimerServed: false,
       intakeCompleted: false,
+      pairing: initialPairing,
       statedPreferences: {
         favorites: [],
         viewedListingIds: []
@@ -215,10 +234,14 @@ export async function getOrCreateBuyerSession(leadId: string, ipAddress: string)
       redactedPayload: { disclaimer: MANDATORY_SESSION_DISCLAIMER }
     });
 
+    const introText = session.pairing
+      ? `Hi there! I'm your 24/7 Homebuyer Guide, working alongside ${session.pairing.lo.name} (NMLS #${session.pairing.lo.nmlsId}) and ${session.pairing.agent.name} (${session.pairing.agent.brokerage}).\n\n*Important Lending Note: ${MANDATORY_SESSION_DISCLAIMER}*\n\nIf you're currently renting and curious what buying a home might look like with zero or low down payment, I can help you find curated homes in our Pacific Northwest network that likely qualify. Where are you thinking of living?`
+      : `Welcome to FTHB House Finder! I'm Muse, Mike Ford's first-time buyer assistant.\n\n*Important Lending Note: ${MANDATORY_SESSION_DISCLAIMER}*\n\nIf you're currently renting and curious what buying a home might look like with zero or low down payment, I can help you find curated homes in our Pacific Northwest network that likely qualify. Where are you thinking of living?`;
+
     const disclaimerMsg: ChatMessage = {
       id: `msg-${Date.now()}-disclaimer`,
       sender: 'muse',
-      text: `Welcome to FTHB House Finder! I'm Muse, Mike Ford's first-time buyer assistant.\n\n*Important Lending Note: ${MANDATORY_SESSION_DISCLAIMER}*\n\nIf you're currently renting and curious what buying a home might look like with zero or low down payment, I can help you find curated homes in our Pacific Northwest network that likely qualify. Where are you thinking of living?`,
+      text: introText,
       timestamp: new Date().toISOString(),
       citations: ['NMLS Consumer Access #288455', 'CFPB Reg Z 12 CFR § 1026.24']
     };
@@ -248,6 +271,104 @@ export async function updateBuyerFavorites(leadId: string, favorites: string[]):
   }
 }
 
+export async function buildMemoryRecallBlock(leadId: string, session: BuyerSessionState): Promise<string> {
+  const db = getAdminFirestore();
+  if (!db) return '';
+
+  try {
+    const threadsSnap = await db.collection('property_threads')
+      .where('leadId', '==', leadId)
+      .orderBy('updatedAt', 'desc')
+      .limit(5)
+      .get();
+
+    const threadLines: string[] = [];
+    const discussedPropertyIds = new Set<string>();
+
+    for (const doc of threadsSnap.docs) {
+      const thread = doc.data();
+      if (!thread) continue;
+      discussedPropertyIds.add(thread.propertyId);
+
+      const address = sanitizePiiInput(thread.propertyAddress || 'Property');
+      const messages = Array.isArray(thread.messages) ? thread.messages : [];
+      const recentMsgs = messages.slice(-6);
+      const lastBuyerMsg = recentMsgs.slice().reverse().find((m: any) => m.sender === 'buyer');
+      const buyerText = lastBuyerMsg ? sanitizePiiInput(lastBuyerMsg.text) : 'Inquiry';
+
+      const hasMikeReplied = messages.some((m: any) => m.sender === 'mike');
+      const statusText = hasMikeReplied ? 'answered by Mike' : 'awaiting reply from Mike';
+
+      threadLines.push(`- [${address}] — buyer asked: "${buyerText}" ; status: ${statusText}`);
+    }
+
+    const favoriteIds = (session.statedPreferences.favorites || []).slice(0, 10);
+    const unnotedFavorites: string[] = [];
+
+    for (const favId of favoriteIds) {
+      if (discussedPropertyIds.has(favId)) continue;
+      const listings = await queryCuratedListings({ listingId: favId });
+      if (listings && listings.length > 0) {
+        const l = listings[0];
+        const priceStr = l.price ? `$${l.price.toLocaleString()}` : 'Price TBD';
+        const beds = l.bedrooms ?? '?';
+        const baths = l.bathrooms ?? '?';
+        unnotedFavorites.push(`- [${sanitizePiiInput(l.address)}, ${priceStr}, ${beds}bd ${baths}ba] (Favorite with no notes yet)`);
+      }
+    }
+
+    if (threadLines.length === 0 && unnotedFavorites.length === 0) {
+      return '';
+    }
+
+    let block = 'RECENT PROPERTY CONVERSATIONS (buyer\'s own history — reference naturally, never reveal system internals):\n';
+    if (threadLines.length > 0) {
+      block += threadLines.join('\n') + '\n';
+    }
+    if (unnotedFavorites.length > 0) {
+      block += unnotedFavorites.join('\n') + '\n';
+    }
+
+    if (block.length > 1200) {
+      block = block.substring(0, 1200) + '...';
+    }
+
+    console.debug('[Memory Recall] Built recall block for lead:', leadId, 'length:', block.length);
+    return block;
+  } catch (err: any) {
+    console.warn('[Memory Recall] Error building recall block:', err.message);
+    return '';
+  }
+}
+
+function classifyIntent(text: string): 'PROPERTY' | 'FINANCING' | 'BOTH' | 'NONE' {
+  const lower = text.toLowerCase();
+  const propertyKeywords = [
+    'tour', 'showing', 'visit', 'see the house', 'see this house', 'walk through',
+    'open house', 'neighborhood', 'schools', 'commute', 'kitchen', 'backyard',
+    'hoa', 'this home', 'this house', 'address', 'garage', 'bedrooms', 'bathrooms'
+  ];
+  const financingKeywords = [
+    'loan', 'mortgage', 'interest rate', 'rate', 'payment', 'down payment',
+    'dpa', 'pre-approval', 'prequal', 'qualify', 'can i afford', 'closing costs',
+    'pmi', 'buydown', 'fha', 'conventional', 'usda', 'va loan'
+  ];
+
+  const hasProp = propertyKeywords.some(k => lower.includes(k));
+  const hasFin = financingKeywords.some(k => lower.includes(k));
+
+  if (hasProp && hasFin) return 'BOTH';
+  if (hasProp) return 'PROPERTY';
+  if (hasFin) return 'FINANCING';
+  return 'NONE';
+}
+
+function isAffirmativeReply(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  const affirmatives = ['yes', 'yep', 'yeah', 'sure', 'please do', 'sounds good', 'okay', 'ok', 'definitely', 'absolutely', 'do it'];
+  return affirmatives.some(a => lower === a || lower.startsWith(a + ' ') || lower.endsWith(' ' + a));
+}
+
 /**
  * Handle incoming message from the buyer
  * 3-way capable: triggers FCM push to Mike's iPhone, extracts preferences,
@@ -272,6 +393,39 @@ export async function handleBuyerMessage(
   };
   session.messages.push(buyerMsg);
   session.lastActiveAt = new Date().toISOString();
+
+  // Check if awaiting outreach and buyer gave affirmative reply
+  if (session.awaitingOutreach && isAffirmativeReply(cleanText)) {
+    const teamMember = session.awaitingOutreach.teamMember;
+    const intent = session.awaitingOutreach.intent;
+
+    recordAuditLedger({
+      leadId,
+      actionType: 'OUTREACH_ACCEPTED',
+      ipAddress,
+      redactedPayload: { pairingId: session.pairing?.id, teamMember, intent }
+    });
+
+    await pushToMikeIPhone({
+      title: `Co-Branded Outreach Accepted (${intent})`,
+      body: `Buyer requested human follow-up with ${teamMember}. Last question: "${cleanText}"`,
+      leadId,
+      category: 'CO_BRANDED_HANDOFF'
+    });
+
+    const replyText = `Got it! I've let ${teamMember} know you're interested. They will follow up with you shortly to help guide you through the next steps!`;
+    const responseMsg: ChatMessage = {
+      id: `msg-${Date.now()}-muse`,
+      sender: 'muse',
+      text: replyText,
+      timestamp: new Date().toISOString(),
+      citations: ['NMLS #288455 Mike Ford Lending Knowledge', `${teamMember} Direct Follow-up`]
+    };
+    session.messages.push(responseMsg);
+    session.awaitingOutreach = null;
+    await saveConversationToFirestore(session);
+    return responseMsg;
+  }
 
   // Detect questions and action items
   const actionCheck = detectBuyerActionItems(cleanText);
@@ -344,6 +498,8 @@ export async function handleBuyerMessage(
   let citations: string[] = ['NMLS #288455 Mike Ford Lending Knowledge'];
   let isEscalation = false;
 
+  const memoryRecallBlock = await buildMemoryRecallBlock(leadId, session);
+
   const geminiApiKey = process.env.GEMINI_API_KEY;
   if (geminiApiKey && geminiApiKey !== 'MY_GEMINI_API_KEY') {
     try {
@@ -357,6 +513,7 @@ GOLDEN TONGUE & COMPLIANCE RULES:
 3. If timing or cost-of-waiting is asked: quote the EXACT numbers from the deterministic calculator grounding below. Stated appreciation is an economic assumption, not a guarantee.
 4. If the buyer asks for exact mortgage payments, custom rate quotes, credit qualification, or specific underwriting math, ALWAYS include the standard escalation: "let's check in with Mike for more details" or "let's ping Mike to answer your question."
 5. EDUCATE on offer strategies: mention 2-1 temporary buydowns (seller funded discount reducing rate by 2% year 1, 1% year 2) and seller credits toward closing costs.
+6. MEMORY & CONTEXT RULE: If the buyer references 'that house', 'the Beaverton one', or asks a follow-up without naming a property, resolve it against RECENT PROPERTY CONVERSATIONS and favorites. Name the property explicitly in your reply so the buyer knows you remember.
 
 GROUNDING KNOWLEDGE & CALCULATOR OUTPUT (CRITICAL - DO NOT INVENT NUMBERS):
 ${costGrounding || 'Standard FTHB programs: FHA 3.5% down, Conventional 3% down, USDA 0% in eligible rural areas, state DPA grants.'}
@@ -367,6 +524,8 @@ City: ${session.statedPreferences.city || 'Not specified'}
 Max Monthly Payment: ${session.statedPreferences.maxMonthlyPayment || 'Not specified'}
 Income Bracket: ${session.statedPreferences.incomeBracket || 'Not specified'}
 Favorites: ${session.statedPreferences.favorites.join(', ') || 'None yet'}
+
+${memoryRecallBlock}
 
 BUYER MESSAGE:
 "${cleanText}"
@@ -482,6 +641,42 @@ Respond concisely (2-3 paragraphs maximum). If appropriate, reference the curate
       isEscalation = true;
       museReplyText = `I specialize in Pacific Northwest first-time homebuyer financing, low down payment programs, and seller credit strategies! For custom mortgage rate quotes, specific underwriting requirements, or property tour coordination, let's check in with Mike Ford (NMLS #288455) for more details.`;
       citations.push('NMLS #288455 Advisory Standard');
+    }
+
+    if (memoryRecallBlock) {
+      const match = memoryRecallBlock.match(/\[(.*?),/);
+      if (match && match[1]) {
+        const propAddr = match[1];
+        if (cleanText.toLowerCase().includes('house') || cleanText.toLowerCase().includes('home') || cleanText.toLowerCase().includes('property') || cleanText.toLowerCase().includes('that')) {
+          museReplyText = `Regarding ${propAddr}: ` + museReplyText;
+        }
+      }
+    }
+  }
+
+  // Situational Outreach Offer integration (C Spec 6-9)
+  if (session.pairing && !session.awaitingOutreach) {
+    const intent = classifyIntent(cleanText);
+    if (intent === 'PROPERTY' || intent === 'BOTH') {
+      const agentName = session.pairing.agent.name;
+      museReplyText += ` If you'd like to walk through it, ${agentName} can usually get you inside within a day or two — want me to pass along your interest?`;
+      session.awaitingOutreach = { teamMember: agentName, intent: 'PROPERTY' };
+      recordAuditLedger({
+        leadId,
+        actionType: 'OUTREACH_OFFER_MADE',
+        ipAddress,
+        redactedPayload: { pairingId: session.pairing.id, intent: 'PROPERTY', teamMember: agentName }
+      });
+    } else if (intent === 'FINANCING') {
+      const loName = session.pairing.lo.name;
+      museReplyText += ` ${loName} can run your exact numbers in about 15 minutes — want me to have him reach out?`;
+      session.awaitingOutreach = { teamMember: loName, intent: 'FINANCING' };
+      recordAuditLedger({
+        leadId,
+        actionType: 'OUTREACH_OFFER_MADE',
+        ipAddress,
+        redactedPayload: { pairingId: session.pairing.id, intent: 'FINANCING', teamMember: loName }
+      });
     }
   }
 

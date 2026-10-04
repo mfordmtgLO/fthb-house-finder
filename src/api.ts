@@ -93,14 +93,30 @@ function getAuthHeaders(leadId?: string): HeadersInit {
   };
 }
 
-export async function initBuyerSession(signal?: AbortSignal): Promise<BuyerSessionState> {
+export async function fetchPairingDetails(pairingId: string, signal?: AbortSignal): Promise<any | null> {
+  try {
+    const res = await fetchWithTimeout(`/api/pairing/${encodeURIComponent(pairingId)}`, {}, DEFAULT_API_TIMEOUT_MS, signal);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function initBuyerSession(signal?: AbortSignal): Promise<BuyerSessionState & { pairing?: any }> {
   const existingLeadId = getLocalLeadId();
+  let pairingId: string | undefined = undefined;
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    pairingId = params.get('pair') || undefined;
+  }
+
   const res = await fetchWithTimeout(
     '/api/auth/session',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leadId: existingLeadId })
+      body: JSON.stringify({ leadId: existingLeadId, pairingId })
     },
     DEFAULT_API_TIMEOUT_MS,
     signal
@@ -110,7 +126,7 @@ export async function initBuyerSession(signal?: AbortSignal): Promise<BuyerSessi
     throw new Error(`Failed to initialize session: ${res.statusText}`);
   }
 
-  const data: BuyerSessionState = await res.json();
+  const data = await res.json();
   setLocalLeadId(data.leadId);
   return data;
 }
@@ -519,6 +535,26 @@ export async function fetchPluginStatus(signal?: AbortSignal): Promise<PluginSta
   if (!res.ok) {
     throw new Error(`Failed to fetch plugin status: ${res.statusText}`);
   }
+  return res.json();
+}
+
+export async function submitIntakeLead(leadData: any, signal?: AbortSignal): Promise<any> {
+  const res = await fetchWithTimeout(
+    '/api/plugin/intake-lead',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(leadData)
+    },
+    DEFAULT_API_TIMEOUT_MS,
+    signal
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to submit intake lead');
+  }
+
   return res.json();
 }
 
