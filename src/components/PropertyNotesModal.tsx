@@ -126,7 +126,7 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
       }
       if (isMountedRef.current) {
         console.warn('Note submission error:', err);
-        setErrorMessage(err?.message || "Couldn't post your note — check your connection and try again.");
+        setErrorMessage(err?.friendlyMessage || err?.message || "Couldn't post your note — check your connection and try again.");
       }
     } finally {
       if (isMountedRef.current) {

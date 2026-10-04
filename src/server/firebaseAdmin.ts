@@ -70,3 +70,26 @@ export function getAdminFirestore(): Firestore | null {
     return null;
   }
 }
+
+/**
+ * Resilient Firestore Write Helper
+ * Prevents requests from hanging when remote Firestore hits quota limits or experiences gRPC retry loops.
+ */
+export async function safeFirestoreWrite<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T | null> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(null);
+    }, timeoutMs);
+  });
+  try {
+    const result = await Promise.race([promise, timeout]);
+    clearTimeout(timer!);
+    return result;
+  } catch (err: any) {
+    clearTimeout(timer!);
+    console.warn('[Firestore Write Safe Warning]', err.message);
+    return null;
+  }
+}
+

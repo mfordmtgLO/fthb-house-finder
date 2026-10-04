@@ -12,7 +12,7 @@ import { queryVantageGrounding } from './vantageKnowledge.ts';
 import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAuditLedger } from './compliance.ts';
 import { calculateCostOfWaiting, formatCostOfWaitingForMuse } from './costOfWaiting.ts';
-import { getAdminFirestore } from './firebaseAdmin.ts';
+import { getAdminFirestore, safeFirestoreWrite } from './firebaseAdmin.ts';
 
 export interface ChatMessage {
   id: string;
@@ -87,7 +87,7 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
       text: sanitizePiiInput(m.text)
     }));
 
-    await db.collection('fthb_conversations').doc(session.leadId).set({
+    await safeFirestoreWrite(db.collection('fthb_conversations').doc(session.leadId).set({
       leadId: session.leadId,
       createdAt: session.createdAt,
       lastActiveAt: session.lastActiveAt,
@@ -101,11 +101,11 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
       statedPreferences: session.statedPreferences,
       messages: sanitizedMessages,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    }, { merge: true }), 1500);
 
     // If a curation request was made, mirror to the leads collection for Mike's queue
     if (session.leadCurationRequest) {
-      await db.collection('leads').doc(session.leadId).set({
+      safeFirestoreWrite(db.collection('leads').doc(session.leadId).set({
         id: session.leadId,
         leadId: session.leadId,
         leadCurationRequest: session.leadCurationRequest,
@@ -115,7 +115,9 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
         phone: session.phone || null,
         source: 'plugin-chat',
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      }, { merge: true }), 1500).catch(err => {
+        console.warn('[Leads Mirror Warning]', err.message);
+      });
     }
   } catch (err: any) {
     console.warn('[Firebase Admin] Error persisting conversation to fthb_conversations:', err.message);
@@ -372,7 +374,7 @@ BUYER MESSAGE:
 Respond concisely (2-3 paragraphs maximum). If appropriate, reference the curated platter of matching Pacific Northwest homes available below.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         contents: prompt
       });
 
@@ -568,10 +570,19 @@ export async function getMikeConversationInbox(): Promise<BuyerSessionState[]> {
           });
         });
 
-        conversations.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());
-        // Sync cache
-        conversations.forEach(c => sessionCache.set(c.leadId, c));
-        return conversations;
+        // Merge with in-memory sessions so active in-memory sessions are always included
+        const mergedMap = new Map<string, BuyerSessionState>();
+        for (const [id, sess] of sessionCache.entries()) {
+          mergedMap.set(id, sess);
+        }
+        for (const c of conversations) {
+          if (!mergedMap.has(c.leadId)) {
+            mergedMap.set(c.leadId, c);
+          }
+        }
+        const merged = Array.from(mergedMap.values());
+        merged.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());
+        return merged;
       }
     } catch (err: any) {
       console.warn('[Firebase Admin] Error loading inbox from fthb_conversations:', err.message);
@@ -582,6 +593,20 @@ export async function getMikeConversationInbox(): Promise<BuyerSessionState[]> {
   const cached = Array.from(sessionCache.values());
   cached.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());
   return cached;
+}
+
+/**
+ * Looks up an in-memory session by email (case-insensitive)
+ */
+export function findSessionByEmail(email: string): BuyerSessionState | null {
+  if (!email || typeof email !== 'string') return null;
+  const norm = email.toLowerCase().trim();
+  for (const session of sessionCache.values()) {
+    if (session.email && session.email.toLowerCase().trim() === norm) {
+      return session;
+    }
+  }
+  return null;
 }
 
 function extractPreferencesFromText(text: string, session: BuyerSessionState) {

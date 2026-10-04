@@ -14,7 +14,7 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { getAdminFirestore } from './firebaseAdmin.ts';
+import { getAdminFirestore, safeFirestoreWrite } from './firebaseAdmin.ts';
 
 export type StaffRole = 'master_admin' | 'admin' | 'loan_officer' | 'auditor';
 
@@ -113,7 +113,7 @@ export async function getStaffRosterDoc(email: string): Promise<StaffRosterDoc |
           createdBy: 'system_bootstrap'
         };
 
-        await db.collection('staff_roster').doc(bootstrapEmail).set(bootstrapDoc);
+        await safeFirestoreWrite(db.collection('staff_roster').doc(bootstrapEmail).set(bootstrapDoc));
         console.log(`[Staff Roster Bootstrap] Initialized master_admin for ${bootstrapEmail}`);
 
         await recordStaffAudit({
@@ -169,7 +169,7 @@ export async function upsertStaffRosterDoc(
     createdBy: existing?.createdBy || actorEmail
   };
 
-  await db.collection('staff_roster').doc(normEmail).set(docData, { merge: true });
+  await safeFirestoreWrite(db.collection('staff_roster').doc(normEmail).set(docData, { merge: true }));
   invalidateRosterCache(normEmail);
   rosterCache.set(normEmail, { doc: docData, fetchedAt: Date.now() });
   return docData;
@@ -184,12 +184,29 @@ export async function revokeStaffRosterDoc(email: string, _actorEmail: string): 
   if (!db) return false;
 
   try {
-    await db.collection('staff_roster').doc(normEmail).set({
+    await safeFirestoreWrite(db.collection('staff_roster').doc(normEmail).set({
       isRevoked: true,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    }, { merge: true }));
 
     invalidateRosterCache(normEmail);
+    // In-memory revocation guarantees immediate effect even under remote Firestore quota delay
+    const cached = rosterCache.get(normEmail);
+    if (cached) {
+      cached.doc.isRevoked = true;
+    } else {
+      rosterCache.set(normEmail, {
+        doc: {
+          email: normEmail,
+          role: 'loan_officer',
+          isRevoked: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: _actorEmail
+        },
+        fetchedAt: Date.now()
+      });
+    }
     return true;
   } catch (err: any) {
     console.error('[Staff Revocation Error]', err.message);
@@ -206,10 +223,10 @@ export async function restoreStaffRosterDoc(email: string, _actorEmail: string):
   if (!db) return false;
 
   try {
-    await db.collection('staff_roster').doc(normEmail).set({
+    await safeFirestoreWrite(db.collection('staff_roster').doc(normEmail).set({
       isRevoked: false,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    }, { merge: true }));
 
     invalidateRosterCache(normEmail);
     return true;
@@ -250,17 +267,15 @@ export async function recordStaffAudit(
 
   complianceAuditLedger.push(record);
 
-  // Mirror to Firestore compliance_audit_ledger collection
+  // Mirror to Firestore compliance_audit_ledger collection with timeout protection
   const db = getAdminFirestore();
   if (db) {
-    try {
-      await db.collection('compliance_audit_ledger').doc(record.id).set({
-        ...record,
-        timestamp: record.timestamp
-      });
-    } catch (err: any) {
+    safeFirestoreWrite(db.collection('compliance_audit_ledger').doc(record.id).set({
+      ...record,
+      timestamp: record.timestamp
+    }), 1500).catch(err => {
       console.warn('[Audit Ledger Firestore Warning]', err.message);
-    }
+    });
   }
 
   return record;

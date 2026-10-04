@@ -6,7 +6,7 @@
  * Manages local storage session cache, PII sanitization, and API endpoints.
  */
 
-import { CuratedListing, ChatMessage, PropertyThread, PublishingKit, BuyerSessionState, BuyerCurationsResponse } from './types';
+import { CuratedListing, ChatMessage, PropertyThread, PublishingKit, BuyerSessionState, BuyerCurationsResponse, PluginStatusResponse } from './types';
 
 const SESSION_STORAGE_KEY = 'fthb_buyer_lead_id';
 export const DEFAULT_API_TIMEOUT_MS = 15000;
@@ -163,7 +163,12 @@ export async function sendMuseChatMessage(leadId: string, message: string, signa
   );
 
   if (!res.ok) {
-    throw new Error(`Failed to send message: ${res.statusText}`);
+    const errData = await res.json().catch(() => ({}));
+    const err: any = new Error(errData.error || errData.friendlyMessage || `Failed to send message: ${res.statusText}`);
+    err.code = errData.code;
+    err.status = res.status;
+    err.friendlyMessage = errData.friendlyMessage;
+    throw err;
   }
 
   return res.json();
@@ -308,8 +313,12 @@ export async function postPropertyNote(params: {
   );
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Couldn't post your note — check your connection and try again.");
+    const errData = await res.json().catch(() => ({}));
+    const err: any = new Error(errData.error || errData.friendlyMessage || "Couldn't post your note — check your connection and try again.");
+    err.code = errData.code;
+    err.status = res.status;
+    err.friendlyMessage = errData.friendlyMessage;
+    throw err;
   }
 
   return res.json();
@@ -504,3 +513,12 @@ export async function revokeStaff(email: string, token?: string, signal?: AbortS
 
   return res.json();
 }
+
+export async function fetchPluginStatus(signal?: AbortSignal): Promise<PluginStatusResponse> {
+  const res = await fetchWithTimeout('/api/plugin/status', {}, DEFAULT_API_TIMEOUT_MS, signal);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch plugin status: ${res.statusText}`);
+  }
+  return res.json();
+}
+

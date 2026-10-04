@@ -5,7 +5,8 @@ import {
   fetchCuratedListings,
   fetchBuyerCurations,
   updateFavoritesServer,
-  getLocalLeadId
+  getLocalLeadId,
+  fetchPluginStatus
 } from './api';
 import { CuratedListing, BuyerCurationsResponse } from './types';
 import { Header } from './components/Header';
@@ -42,6 +43,8 @@ export default function App() {
   const [leadId, setLeadId] = useState<string>('');
   const [buyerEmail, setBuyerEmail] = useState<string>('');
   const [disclaimerServed, setDisclaimerServed] = useState<boolean>(false);
+  const [pluginStatus, setPluginStatus] = useState<'active' | 'suspended' | 'killed'>('active');
+  const [pluginReason, setPluginReason] = useState<string>('');
   const [listings, setListings] = useState<CuratedListing[]>([]);
   const [curationsData, setCurationsData] = useState<BuyerCurationsResponse | null>(null);
   const [curationScope, setCurationScope] = useState<'all' | 'my-curations'>('all');
@@ -86,7 +89,7 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // 1. Initialize Buyer Session & Disclaimer
+  // 1. Initialize Buyer Session & Disclaimer & Plugin Status
   useEffect(() => {
     initBuyerSession()
       .then(session => {
@@ -95,10 +98,25 @@ export default function App() {
         if (session.statedPreferences?.favorites) {
           setFavorites(session.statedPreferences.favorites);
         }
+        if (session.pluginStatus) {
+          setPluginStatus(session.pluginStatus);
+        }
       })
       .catch(err => {
         console.error('Session init error:', err);
+        if (err?.message?.includes('suspended') || err?.code === 'PLUGIN_SUSPENDED') {
+          setPluginStatus('suspended');
+        } else if (err?.message?.includes('killed') || err?.code === 'PLUGIN_KILLED') {
+          setPluginStatus('killed');
+        }
       });
+
+    fetchPluginStatus()
+      .then(res => {
+        setPluginStatus(res.status);
+        if (res.reason) setPluginReason(res.reason);
+      })
+      .catch(() => {});
   }, []);
 
   // 2. Fetch Buyer Personal Curations from GET /api/buyer/curations/:leadId
@@ -244,6 +262,29 @@ export default function App() {
         <div className="fixed top-20 right-4 z-50 bg-slate-900 border border-cyan-500/50 text-cyan-200 px-4 py-2.5 rounded-xl shadow-2xl text-xs flex items-center gap-2 animate-bounce">
           <Sparkles className="w-4 h-4 text-cyan-400 flex-shrink-0" />
           <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Kill Switch & Suspension Banners */}
+      {pluginStatus === 'suspended' && (
+        <div className="bg-amber-950/90 border-b border-amber-500/50 text-amber-200 px-4 py-2.5 text-xs flex items-center justify-between gap-3 shrink-0 z-30">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Service Notice:</strong> FTHB House Finder is temporarily unavailable while maintenance is being performed. Please contact Mike Ford (NMLS #288455) at <a href="mailto:fordmj@gmail.com" className="underline font-semibold hover:text-white">fordmj@gmail.com</a> for immediate assistance.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {pluginStatus === 'killed' && (
+        <div className="bg-rose-950/95 border-b border-rose-500/60 text-rose-100 px-4 py-3 text-xs flex items-center justify-between gap-3 shrink-0 shadow-lg z-30">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>
+              <strong>Service Notice:</strong> This FTHB House Finder plugin install has been permanently disabled by Mike Ford (NMLS #288455). Contact <a href="mailto:fordmj@gmail.com" className="underline font-bold text-white">fordmj@gmail.com</a> for access.
+            </span>
+          </div>
         </div>
       )}
 

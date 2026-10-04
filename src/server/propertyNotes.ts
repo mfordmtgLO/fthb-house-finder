@@ -17,7 +17,7 @@ import { MIKE_FORD_LO_PROFILE, getPairedAgentForCity, type LoanOfficerProfile, t
 import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { queryVantageGrounding } from './vantageKnowledge.ts';
 import { calculateCostOfWaiting, formatCostOfWaitingForMuse } from './costOfWaiting.ts';
-import { getAdminFirestore } from './firebaseAdmin.ts';
+import { getAdminFirestore, safeFirestoreWrite } from './firebaseAdmin.ts';
 
 export interface PropertyNoteMessage {
   id: string;
@@ -99,11 +99,9 @@ export async function getOrCreatePropertyThread(propertyId: string, leadId: stri
   threadCache.set(threadId, newThread);
 
   if (db) {
-    try {
-      await db.collection('property_threads').doc(threadId).set(newThread);
-    } catch (err: any) {
+    safeFirestoreWrite(db.collection('property_threads').doc(threadId).set(newThread), 1500).catch(err => {
       console.warn('[Property Thread Firestore Init Warning]', err.message);
-    }
+    });
   }
 
   return newThread;
@@ -179,7 +177,7 @@ GOLDEN TONGUE & COMPLIANCE RULES:
 6. Keep length concise and readable (2 short paragraphs).`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         contents: prompt
       });
 
@@ -364,11 +362,9 @@ export async function addPropertyNote(params: {
   // Persist updated thread to Firestore
   const db = getAdminFirestore();
   if (db) {
-    try {
-      await db.collection('property_threads').doc(thread.threadId).set(thread, { merge: true });
-    } catch (err: any) {
+    safeFirestoreWrite(db.collection('property_threads').doc(thread.threadId).set(thread, { merge: true }), 1500).catch(err => {
       console.warn('[Property Thread Firestore Write Warning]', err.message);
-    }
+    });
   }
 
   return { note: noteMsg, aiReply: aiReplyMsg };
@@ -396,11 +392,9 @@ export async function addMikePropertyReply(propertyId: string, leadId: string, r
 
   const db = getAdminFirestore();
   if (db) {
-    try {
-      await db.collection('property_threads').doc(thread.threadId).set(thread, { merge: true });
-    } catch (err: any) {
+    safeFirestoreWrite(db.collection('property_threads').doc(thread.threadId).set(thread, { merge: true }), 1500).catch(err => {
       console.warn('[Property Thread Firestore Write Warning]', err.message);
-    }
+    });
   }
 
   return replyMsg;

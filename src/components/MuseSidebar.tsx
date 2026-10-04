@@ -46,6 +46,7 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dailyCapReached, setDailyCapReached] = useState(false);
   const [incomeSliderIndex, setIncomeSliderIndex] = useState(1); // default $60k-$85k
   const [showIntakeForm, setShowIntakeForm] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -87,12 +88,21 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
     try {
       const reply = await sendMuseChatMessage(leadId, textToSend);
       setMessages(prev => [...prev.filter(m => m.id !== tempUserMsg.id), tempUserMsg, reply]);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Chat error:', err);
+      let errorText = "I couldn't reach the server right now. Let's check in with Mike directly for questions about your scenario!";
+      if (err?.code === 'PLUGIN_SUSPENDED' || err?.message?.includes('PLUGIN_SUSPENDED') || err?.message?.includes('temporarily unavailable')) {
+        errorText = "FTHB House Finder service is temporarily unavailable — contact Mike Ford (NMLS #288455) at fordmj@gmail.com.";
+      } else if (err?.code === 'PLUGIN_KILLED' || err?.message?.includes('PLUGIN_KILLED') || err?.message?.includes('permanently disabled')) {
+        errorText = "FTHB House Finder service is permanently disabled. Contact Mike Ford (NMLS #288455) at fordmj@gmail.com.";
+      } else if (err?.code === 'DAILY_CHAT_CAP_EXCEEDED' || err?.friendlyMessage) {
+        errorText = err?.friendlyMessage || "You've asked a lot of great questions today! Muse rests after 40 questions per day to maintain quality. Mike Ford (NMLS #288455) is available directly if you need answers immediately.";
+        setDailyCapReached(true);
+      }
       const errMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         sender: 'muse',
-        text: "I couldn't reach the server right now. Let's check in with Mike directly for questions about your scenario!",
+        text: errorText,
         timestamp: new Date().toISOString(),
         isEscalation: true
       };
@@ -351,6 +361,11 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
 
         {/* Input Box: Full available width minus send button */}
         <div className="p-3">
+          {dailyCapReached && (
+            <div className="mb-2 p-2 bg-amber-950/60 border border-amber-600/50 rounded-lg text-[11px] text-amber-200">
+              You've hit today's daily question limit. Muse will be ready for more questions tomorrow!
+            </div>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -362,13 +377,14 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
               type="text"
               value={inputMessage}
               maxLength={1000}
+              disabled={dailyCapReached}
               onChange={(e) => setInputMessage(e.target.value)}
-              placeholder="Ask Muse about homes, rates, 0% down..."
-              className="flex-1 min-w-0 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+              placeholder={dailyCapReached ? "Daily question limit reached. See you tomorrow!" : "Ask Muse about homes, rates, 0% down..."}
+              className="flex-1 min-w-0 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
             />
             <button
               type="submit"
-              disabled={!inputMessage.trim() || loading}
+              disabled={!inputMessage.trim() || loading || dailyCapReached}
               className="shrink-0 p-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl shadow-md transition-all flex items-center justify-center"
               title="Send message"
             >

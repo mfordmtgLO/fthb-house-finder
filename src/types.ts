@@ -69,6 +69,19 @@ export interface BuyerSessionState {
     favorites: string[];
   };
   messagesCount: number;
+  pluginStatus?: 'active' | 'suspended' | 'killed';
+  killAll?: boolean;
+  operational?: boolean;
+}
+
+export interface PluginStatusResponse {
+  success: boolean;
+  instanceId: string;
+  appVersion: string;
+  status: 'active' | 'suspended' | 'killed';
+  killAll: boolean;
+  operational: boolean;
+  reason?: string;
 }
 
 export interface AgentProfile {

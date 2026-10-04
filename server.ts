@@ -11,7 +11,7 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
-import { getAdminFirestore } from './src/server/firebaseAdmin.ts';
+import { getAdminFirestore, safeFirestoreWrite } from './src/server/firebaseAdmin.ts';
 import {
   requireBuyerSession,
   requireStaffRole,
@@ -30,7 +30,8 @@ import {
   handleBuyerMessage,
   handleMikeReply,
   updateBuyerFavorites,
-  getMikeConversationInbox
+  getMikeConversationInbox,
+  findSessionByEmail
 } from './src/server/museEngine.ts';
 import {
   getOrCreatePropertyThread,
@@ -46,6 +47,21 @@ import {
 } from './src/server/rateLimiter.ts';
 import { sanitizePiiInput, getAuditLedger } from './src/server/compliance.ts';
 import { getMikeDeviceTokens } from './src/server/deviceTokens.ts';
+import {
+  getPluginOperationalState,
+  sendHeartbeat,
+  startHeartbeatScheduler,
+  setMockDashboardConfig,
+  getMockDashboardConfig
+} from './src/server/pluginControlPlane.ts';
+import {
+  checkAndIncrementDailyChat,
+  checkAndIncrementDailyNotes,
+  getDailyAbuseStatus,
+  resetDailyCapsForTest,
+  setDailyChatCountForTest,
+  setDailyNoteCountForTest
+} from './src/server/abuseGovernor.ts';
 
 dotenv.config();
 
@@ -92,6 +108,35 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Plugin Operational Enforcement Middleware (Kill Switch & Suspend Control)
+// Suspended or killAll: returns HTTP 403 { code: 'PLUGIN_SUSPENDED' }
+// Killed: returns HTTP 403 { code: 'PLUGIN_KILLED' }
+function requirePluginOperational(req: Request, res: Response, next: NextFunction): void {
+  const state = getPluginOperationalState();
+  if (!state.operational) {
+    if (state.status === 'killed') {
+      res.status(403).json({
+        error: 'FTHB House Finder service is permanently disabled. Please contact Mike Ford (NMLS #288455).',
+        code: 'PLUGIN_KILLED',
+        status: 'killed',
+        operational: false,
+        contact: 'Mike Ford (NMLS #288455), fordmj@gmail.com'
+      });
+      return;
+    }
+    res.status(403).json({
+      error: 'FTHB House Finder service is temporarily unavailable — contact Mike Ford (NMLS #288455).',
+      code: 'PLUGIN_SUSPENDED',
+      status: 'suspended',
+      operational: false,
+      reason: state.reason,
+      contact: 'Mike Ford (NMLS #288455), fordmj@gmail.com'
+    });
+    return;
+  }
+  next();
+}
+
 // -----------------------------------------------------------------------------
 // API Endpoints
 // -----------------------------------------------------------------------------
@@ -109,25 +154,34 @@ app.post('/api/auth/session', async (req: Request, res: Response): Promise<void>
     return;
   }
 
+  // Pulse heartbeat on session init (async, fail-safe)
+  sendHeartbeat(true).catch(err => {
+    console.warn('[Plugin Heartbeat] Session init sync error:', err.message);
+  });
+
   const existingLeadId = req.body.leadId;
   const leadId = (existingLeadId && typeof existingLeadId === 'string' && existingLeadId.length > 5)
     ? existingLeadId
     : `lead-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
   const session = await getOrCreateBuyerSession(leadId, ip);
+  const opState = getPluginOperationalState();
 
   res.json({
     leadId: session.leadId,
     disclaimerServed: session.disclaimerServed,
     disclaimerText: session.messages[0]?.text || '',
     statedPreferences: session.statedPreferences,
-    messagesCount: session.messages.length
+    messagesCount: session.messages.length,
+    pluginStatus: opState.status,
+    killAll: opState.killAll,
+    operational: opState.operational
   });
 });
 
 // 1b. Lead Identity Resolution (Passwordless Email-Link Sign-In Flow)
 // Normalizes email and links to existing lead or initializes a new linkable buyer record
-app.post('/api/auth/identify', async (req: Request, res: Response): Promise<void> => {
+app.post('/api/auth/identify', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
   const { email, currentLeadId } = req.body;
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     res.status(400).json({ error: 'Valid email required' });
@@ -146,15 +200,23 @@ app.post('/api/auth/identify', async (req: Request, res: Response): Promise<void
     // 1. Search existing leads / conversations for matching normalized email
     let matchedLeadId: string | null = null;
 
-    // Check leads collection
-    const leadsSnap = await db.collection('leads').where('email', '==', normalizedEmail).limit(1).get();
-    if (!leadsSnap.empty) {
-      matchedLeadId = leadsSnap.docs[0].id;
-    } else {
-      // Check fthb_conversations collection
-      const convSnap = await db.collection('fthb_conversations').where('email', '==', normalizedEmail).limit(1).get();
-      if (!convSnap.empty) {
-        matchedLeadId = convSnap.docs[0].id;
+    // Check in-memory active sessions first
+    const memMatch = findSessionByEmail(normalizedEmail);
+    if (memMatch) {
+      matchedLeadId = memMatch.leadId;
+    }
+
+    if (!matchedLeadId) {
+      // Check leads collection
+      const leadsSnap = await db.collection('leads').where('email', '==', normalizedEmail).limit(1).get();
+      if (!leadsSnap.empty) {
+        matchedLeadId = leadsSnap.docs[0].id;
+      } else {
+        // Check fthb_conversations collection
+        const convSnap = await db.collection('fthb_conversations').where('email', '==', normalizedEmail).limit(1).get();
+        if (!convSnap.empty) {
+          matchedLeadId = convSnap.docs[0].id;
+        }
       }
     }
 
@@ -180,7 +242,7 @@ app.post('/api/auth/identify', async (req: Request, res: Response): Promise<void
     session.email = normalizedEmail;
     session.statedPreferences.email = normalizedEmail;
 
-    await db.collection('leads').doc(targetLeadId).set({
+    safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set({
       id: targetLeadId,
       leadId: targetLeadId,
       email: normalizedEmail,
@@ -188,12 +250,12 @@ app.post('/api/auth/identify', async (req: Request, res: Response): Promise<void
       statedPreferences: session.statedPreferences,
       createdAt: session.createdAt,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    }, { merge: true }), 1500).catch(err => console.warn('[Leads Write Warning]', err.message));
 
-    await db.collection('fthb_conversations').doc(targetLeadId).set({
+    safeFirestoreWrite(db.collection('fthb_conversations').doc(targetLeadId).set({
       email: normalizedEmail,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    }, { merge: true }), 1500).catch(err => console.warn('[Conversations Write Warning]', err.message));
 
     res.json({
       leadId: targetLeadId,
@@ -206,6 +268,50 @@ app.post('/api/auth/identify', async (req: Request, res: Response): Promise<void
     console.error('[Identity Resolution Error]', err.message);
     res.status(500).json({ error: 'Identity resolution failed' });
   }
+});
+
+// 1c. Plugin Control Plane Status
+app.get('/api/plugin/status', async (_req: Request, res: Response): Promise<void> => {
+  const opState = getPluginOperationalState();
+  res.json({
+    success: true,
+    instanceId: opState.instanceId,
+    appVersion: opState.appVersion,
+    status: opState.status,
+    killAll: opState.killAll,
+    operational: opState.operational,
+    reason: opState.reason
+  });
+});
+
+// 1d. Internal Test / Mock Control Plane Simulation Endpoint
+app.post('/api/internal/test/mock-dashboard', async (req: Request, res: Response): Promise<void> => {
+  const { unreachable, timeout, status, killAll, suspendedReason, reset, resetDailyCaps, setDailyChatCap, setDailyNoteCap, leadId } = req.body;
+  if (reset === true) {
+    setMockDashboardConfig(null);
+    resetDailyCapsForTest();
+    const updated = await sendHeartbeat(false);
+    res.json({ success: true, message: 'Mock reset to live', state: updated });
+    return;
+  }
+  if (resetDailyCaps) {
+    resetDailyCapsForTest();
+  }
+  if (typeof setDailyChatCap === 'number' && leadId) {
+    setDailyChatCountForTest(leadId, setDailyChatCap);
+  }
+  if (typeof setDailyNoteCap === 'number' && leadId) {
+    setDailyNoteCountForTest(leadId, setDailyNoteCap);
+  }
+  setMockDashboardConfig({
+    unreachable: Boolean(unreachable),
+    timeout: Boolean(timeout),
+    status,
+    killAll: Boolean(killAll),
+    suspendedReason
+  });
+  const updated = await sendHeartbeat(false);
+  res.json({ success: true, mockApplied: true, state: updated });
 });
 
 // 2. Curated Listings Endpoint (Publicly browsable catalog for buyers & map)
@@ -266,7 +372,7 @@ app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> 
 });
 
 // 3b. Per-Lead Curations Endpoint (Reads lead_curations/{leadId} cross-project)
-app.get('/api/buyer/curations/:leadId', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+app.get('/api/buyer/curations/:leadId', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const db = getAdminFirestore();
   if (!db) {
     res.status(503).json({
@@ -336,7 +442,7 @@ app.get('/api/buyer/curations/:leadId', requireBuyerSession(getBuyerSession), as
 });
 
 // 3c. Buyer Device Registration (Registers Web Push / FCM token)
-app.post('/api/buyer/register-device', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+app.post('/api/buyer/register-device', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const { leadId, deviceToken, platform } = req.body;
   if (!leadId || !deviceToken) {
     res.status(400).json({ error: 'leadId and deviceToken required' });
@@ -345,16 +451,14 @@ app.post('/api/buyer/register-device', requireBuyerSession(getBuyerSession), asy
 
   const db = getAdminFirestore();
   if (db) {
-    try {
-      await db.collection('device_tokens').doc(leadId).set({
-        leadId,
-        deviceToken,
-        platform: platform || 'web_push',
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    } catch (err: any) {
+    safeFirestoreWrite(db.collection('device_tokens').doc(leadId).set({
+      leadId,
+      deviceToken,
+      platform: platform || 'web_push',
+      updatedAt: new Date().toISOString()
+    }, { merge: true }), 1500).catch(err => {
       console.warn('[Device Token Warning]', err.message);
-    }
+    });
   }
 
   res.json({ success: true, leadId, status: 'REGISTERED' });
@@ -421,8 +525,8 @@ app.post('/api/buyer/notify-curation/:leadId', requireStaffRole('master_admin', 
   });
 });
 
-// 4. Muse AI Chat (Tier 4 Rate Limit: 60 sensitive ops / 15 min)
-app.post('/api/muse/chat', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+// 4. Muse AI Chat (Tier 4 Rate Limit: 60 sensitive ops / 15 min + Daily Abuse Cap)
+app.post('/api/muse/chat', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
   const sensitiveCheck = rateLimitSensitive(ip);
 
@@ -437,6 +541,21 @@ app.post('/api/muse/chat', requireBuyerSession(getBuyerSession), async (req: Req
   const { leadId, message } = req.body;
   if (!leadId || !message) {
     res.status(400).json({ error: 'leadId and message are required' });
+    return;
+  }
+
+  // Daily Abuse Governor (40 chats / 24 hr per session)
+  const dailyChatCheck = checkAndIncrementDailyChat(leadId);
+  if (!dailyChatCheck.allowed) {
+    res.status(429).json({
+      error: dailyChatCheck.friendlyMessage,
+      code: 'DAILY_CHAT_CAP_EXCEEDED',
+      capType: 'chat',
+      limit: dailyChatCheck.limit,
+      remaining: 0,
+      resetInHours: dailyChatCheck.resetInHours,
+      friendlyMessage: dailyChatCheck.friendlyMessage
+    });
     return;
   }
 
@@ -467,7 +586,7 @@ app.get('/api/muse/history/:leadId', requireBuyerSession(getBuyerSession), async
 });
 
 // 6. Update Buyer Favorites (Strict 3-favorite cap enforced)
-app.post('/api/buyer/favorites', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+app.post('/api/buyer/favorites', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const { leadId, favorites } = req.body;
   if (!leadId || !Array.isArray(favorites)) {
     res.status(400).json({ error: 'leadId and favorites array required' });
@@ -491,8 +610,8 @@ app.get('/api/notes/:propertyId/:leadId', requireBuyerSession(getBuyerSession), 
   res.json(thread);
 });
 
-// 8. Add Property Note (Server write with TCPA & Audit Ledger logging)
-app.post('/api/notes', requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+// 8. Add Property Note (Server write with TCPA & Audit Ledger logging + Daily Cap)
+app.post('/api/notes', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
   const sensitiveCheck = rateLimitSensitive(ip);
 
@@ -507,6 +626,21 @@ app.post('/api/notes', requireBuyerSession(getBuyerSession), async (req: Request
   const { propertyId, leadId, authorName, text, tcpaAccepted } = req.body;
   if (!propertyId || !leadId || !text) {
     res.status(400).json({ error: 'propertyId, leadId, and text are required' });
+    return;
+  }
+
+  // Daily Abuse Governor (15 property notes / 24 hr per session)
+  const dailyNoteCheck = checkAndIncrementDailyNotes(leadId);
+  if (!dailyNoteCheck.allowed) {
+    res.status(429).json({
+      error: dailyNoteCheck.friendlyMessage,
+      code: 'DAILY_NOTE_CAP_EXCEEDED',
+      capType: 'note',
+      limit: dailyNoteCheck.limit,
+      remaining: 0,
+      resetInHours: dailyNoteCheck.resetInHours,
+      friendlyMessage: dailyNoteCheck.friendlyMessage
+    });
     return;
   }
 
@@ -961,6 +1095,7 @@ async function startServer() {
     console.log(`[FTHB House Finder] Server running at http://0.0.0.0:${PORT}`);
     console.log(`[Zero-Trust] Fail-closed authentication active.`);
     console.log(`[Mike Ford NMLS #288455] Attribution verified.`);
+    startHeartbeatScheduler();
   });
 }
 
