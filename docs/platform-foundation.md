@@ -159,6 +159,25 @@ Canonical configuration fields:
 
 Vantage creates or updates this configuration; the FTHB platform remains authoritative for lead/customer records and the runtime consumes the published instance configuration.
 
+
+## Protected intellectual-property and anti-abuse baseline
+
+Every FTHB deployment and every Vantage-generated FTHB House Finder distribution must preserve the platform's existing protection baseline:
+
+- Mike Ford ownership/copyright attribution and NMLS #288455 where appropriate.
+- Authorized instance identity and control-plane heartbeat.
+- Administrator-controlled active/suspended/killed states and global kill switch.
+- Per-IP API, lead-intake, webhook, and sensitive-operation rate limiting.
+- Per-lead daily chat and property-note abuse caps.
+- RBAC with master-admin ownership, branch/LO scoping, auditability, and server-side revocation.
+- Compliance audit ledger and PII/financial-identifier sanitization.
+- Crawler/AI-bot access restrictions through robots policy and server-side controls.
+- Stable instance IDs so distributed copies remain attributable to an authorized deployment.
+- Export/package attribution, license metadata, domain/instance binding, and protection notices.
+- No exported artifact may silently remove, disable, or bypass these controls.
+
+The consumer application and its server-side controls are the reference protection implementation. Vantage Studio exports must inherit the protection contract rather than creating a weaker parallel implementation.
+
 ## Safety / deployment principle
 
 Never develop directly on production main.
