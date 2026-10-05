@@ -2,31 +2,50 @@
 
 ## Purpose
 
-Build the lead-capture, lead-cultivation, property-curation, and applicant-conversion platform above Salesforce while preserving the existing FTHB House Finder consumer app and GeoSphere upstream property/eligibility engine.
+Build the proprietary first-time-homebuyer lead-capture, lead-cultivation, property-engagement, and applicant-conversion platform while preserving the existing FTHB House Finder consumer app and GeoSphere upstream property-intelligence engine.
 
-## Protected architecture
+The **First-Time Homebuyer platform is the native CRM and customer-journey system of record** for this ecosystem. It sits above traditional CRMs and does not require Salesforce or another external CRM to operate.
 
-GeoSphere remains the upstream source for RentCast listing pulls, saved-listing folders, scheduled refreshes, and financing/geographic screening.
+## Canonical architecture
 
-FTHB House Finder remains the consumer-facing property discovery and engagement application.
-
-The new LO platform becomes the secure relationship/curation layer between GeoSphere and the buyer experience.
-
-Salesforce remains the downstream CRM/system of record.
+- **First-Time Homebuyer platform** — native lead/customer CRM, top-of-funnel journey, routing, buyer records, curation, communication, conversion workflow, native dashboard, RBAC, and co-branding.
+- **FTHB House Finder** — standalone, deployable consumer micro-app/plugin connected to the FTHB platform.
+- **GeoSphere** — upstream property-intelligence/data engine for RentCast pulls, saved-listing folders, scheduled refreshes, geographic/program screening, and property-change events.
+- **Vantage AI** — intelligence, orchestration, automation, recommendations, outreach drafting, and "second brain" across the ecosystem.
+- **Traditional CRMs (Salesforce, HubSpot, etc.)** — optional downstream export destinations. They are never required to run the native FTHB/Vantage workflow.
 
 ## Core flow
 
-Public website / FTHB intake / Muse / property notes
--> buyer profile and search intent
+Public FTHB website / intake / House Finder / Muse / property notes
+-> native FTHB lead + buyer profile + search intent
 -> GeoSphere listing candidates
--> LO dashboard
+-> native FTHB LO dashboard
 -> LO curation
--> buyer carousel
+-> buyer House Finder/carousel
 -> favorites / Top 3 / notes / questions
 -> price-drop and listing-status events
--> payment-savings notifications
--> financing / pre-approval intent
--> Salesforce
+-> Vantage AI recommendations and outreach drafts
+-> financing / pre-approval / application intent
+-> optional downstream CRM export
+
+## Native FTHB CRM responsibilities
+
+The FTHB dashboard owns the authoritative native records for:
+
+- leads and buyer profiles
+- search intent and engagement history
+- assigned loan officer
+- paired real-estate agent
+- FTHB House Finder instance
+- curated, viewed, favorited, and engaged properties
+- two-way listing-card notes and conversations
+- conversion journey state
+- notification/activity events
+- co-branding and instance configuration
+- team/branch/RBAC access
+- optional downstream export mappings and export history
+
+External CRMs may receive exported records, but they do not become the source of truth for the native FTHB experience.
 
 ## Stable property identity
 
@@ -55,11 +74,11 @@ Important events include:
 - PREAPPROVAL_REQUESTED
 - APPLICATION_REQUESTED
 
-Events should drive notifications and AI recommendations rather than embedding notification logic separately into each feature.
+Events should drive notifications, activity feeds, and Vantage AI recommendations rather than embedding notification logic separately into each feature.
 
 ## Buyer-facing experience
 
-The listing card is the shared workspace between buyer and LO.
+The listing card is the shared workspace between buyer and LO/agent.
 
 It can contain property facts, potential financing-program screening, payment estimate, price history, notes, favorites, Top 3 status, commute tools, and contextual Muse actions.
 
@@ -69,9 +88,9 @@ All financing/program language must remain clearly framed as screening/estimates
 
 Secure Google-authenticated staff experience should provide:
 
-- lead inbox
+- native lead inbox and buyer records
 - buyer profile and stated search criteria
-- conversation history
+- conversation/activity history
 - property activity
 - GeoSphere saved-listing sync/import
 - listing curation
@@ -82,7 +101,7 @@ Secure Google-authenticated staff experience should provide:
 - notification state
 - co-brand configuration
 - conversion/pre-approval activity
-- Salesforce handoff status
+- optional downstream export status
 
 ## Co-branding
 
@@ -90,22 +109,26 @@ A loan officer can create an LO + real-estate-agent branded experience using con
 
 The configuration can control:
 
-- public URL
+- public URL / instance slug
 - LO identity
 - agent identity
 - logos/branding
-- chatbot context
-- Muse context
+- service area
+- lead routing
+- chatbot/Muse context
+- financing programs
 - contact CTAs
 - property cards
 - note participants
 - pre-approval/application CTAs
+- notification behavior
+- optional downstream export mapping
 
 ## Automation principle
 
 GeoSphere scheduled refreshes remain the source of fresh property data.
 
-The new platform should compare synchronized snapshots and emit domain events for material changes.
+The FTHB platform compares synchronized snapshots and emits domain events for material changes. Vantage AI consumes those events for recommendations, orchestration, and draft outreach.
 
 Price drops can produce an estimated payment-savings message.
 
@@ -113,20 +136,42 @@ Status changes can update or suppress a listing.
 
 New listings can become candidate matches for buyers whose saved search criteria and city overlap.
 
+## Experience/Instance contract
+
+Every deployable/co-branded FTHB experience should be represented as configuration against the same codebase, not as a cloned application.
+
+Canonical configuration fields:
+
+- instance_id
+- instance_status
+- owner_lo_id
+- paired_agent_id
+- brand configuration
+- service area
+- GeoSphere source/folder
+- lead routing configuration
+- Muse/Vantage context
+- notification settings
+- CTA configuration
+- financing/program configuration
+- optional downstream export mapping
+- created_at / updated_at
+
+Vantage creates or updates this configuration; the FTHB platform remains authoritative for lead/customer records and the runtime consumes the published instance configuration.
+
 ## Safety / deployment principle
 
 Never develop directly on production main.
-
-Current safety branches:
-
-- safety/baseline-2026-10-05 on fthb-house-finder
-- safety/baseline-2026-10-05 on geosphere-map-oregon-ai-studio
 
 Current development branch:
 
 - feature/platform-foundation on fthb-house-finder
 
-GeoSphere main remains unchanged by this foundation work.
+Current safety baseline:
+
+- safety/baseline-2026-10-05 on fthb-house-finder
+
+The GeoSphere upstream main remains unchanged by this foundation work.
 
 ## Existing capabilities already present in FTHB House Finder
 
@@ -139,14 +184,17 @@ The new platform should extend and connect these capabilities rather than rebuil
 The first production-quality vertical slice should be:
 
 1. Buyer expresses city/search intent.
-2. Lead/search intent is persisted.
+2. Lead/search intent is persisted in the native FTHB CRM.
 3. GeoSphere saved listings can be synchronized into the LO workspace.
 4. LO sees matching candidate properties.
 5. LO selects properties and pushes a curated set.
 6. Buyer sees the curated carousel.
 7. Buyer favorites / notes / asks a question.
-8. LO sees the buyer activity.
+8. LO sees the buyer activity in the native dashboard.
 9. A synchronized price drop updates the same listing.
 10. Buyer and LO receive the resulting event notification.
+11. Vantage AI suggests outreach and can draft the message.
+12. Lead can progress toward pre-approval/application.
+13. Lead may optionally be exported to Salesforce or another CRM.
 
-Once this loop is stable, add Questie, MapQuest commute intelligence, deeper Muse recommendations, co-brand creator, and Salesforce conversion handoff.
+This vertical slice is the foundation for the larger proprietary ecosystem.
