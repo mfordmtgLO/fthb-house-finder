@@ -83,18 +83,29 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
     if (!isOpen || typeof document === 'undefined' || typeof window === 'undefined') return;
 
     if (window.innerWidth < 1024) {
+      const scrollY = window.scrollY || window.pageYOffset || 0;
+      const originalBodyPosition = document.body.style.position;
+      const originalBodyTop = document.body.style.top;
+      const originalBodyWidth = document.body.style.width;
       const originalBodyOverflow = document.body.style.overflow;
       const originalBodyOverscroll = document.body.style.overscrollBehavior;
       const originalHtmlOverflow = document.documentElement.style.overflow;
 
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = '100%';
       document.body.style.overflow = 'hidden';
       document.body.style.overscrollBehavior = 'none';
       document.documentElement.style.overflow = 'hidden';
 
       return () => {
+        document.body.style.position = originalBodyPosition;
+        document.body.style.top = originalBodyTop;
+        document.body.style.width = originalBodyWidth;
         document.body.style.overflow = originalBodyOverflow;
         document.body.style.overscrollBehavior = originalBodyOverscroll;
         document.documentElement.style.overflow = originalHtmlOverflow;
+        window.scrollTo(0, scrollY);
       };
     }
   }, [isOpen]);
@@ -153,7 +164,7 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
   return (
     <aside className="fixed inset-0 md:inset-y-0 md:left-0 z-50 w-full md:w-[420px] bg-slate-900 border-r border-slate-800 shadow-2xl flex flex-col h-[100dvh] md:h-screen overflow-hidden">
       {/* Sidebar Header */}
-      <div className="shrink-0 p-3.5 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border-b border-slate-800 flex items-center justify-between">
+      <div className="shrink-0 p-3.5 pt-[max(0.875rem,env(safe-area-inset-top,0px))] bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border-b border-slate-800 flex items-center justify-between touch-none select-none">
         <div className="flex items-center space-x-2.5 min-w-0">
           {pairing?.agent && agentPhoto && !agentImgError ? (
             <div className="relative flex items-center shrink-0 w-8 h-8">
@@ -260,7 +271,14 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
       )}
 
       {/* Messages Stream: flex-1 with its own scroll and no dead space */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3.5 overscroll-contain">
+      <div
+        className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3.5 overscroll-contain touch-pan-y"
+        style={{
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+          overscrollBehaviorY: 'contain'
+        }}
+      >
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -422,7 +440,7 @@ export const MuseSidebar: React.FC<MuseSidebarProps> = ({
         </div>
 
         {/* Input Box: Full available width minus send button */}
-        <div className="p-3">
+        <div className="p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
           {dailyCapReached && (
             <div className="mb-2 p-2 bg-amber-950/60 border border-amber-600/50 rounded-lg text-[11px] text-amber-200">
               You've hit today's daily question limit. Muse will be ready for more questions tomorrow!

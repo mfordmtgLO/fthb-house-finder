@@ -63,6 +63,17 @@ import {
   setDailyChatCountForTest,
   setDailyNoteCountForTest
 } from './src/server/abuseGovernor.ts';
+import {
+  validateAndFormatE164,
+  recordIntakeTcpaConsent,
+  revokeTcpaConsent,
+  canTextLead,
+  sendSmsToLead,
+  getLeadTcpaConsentBadge,
+  getTcpaConsentRecord,
+  TCPA_CONSENT_VERSION,
+  TCPA_DISCLOSURE_TEXT
+} from './src/server/tcpaConsent.ts';
 
 dotenv.config();
 
@@ -297,7 +308,7 @@ app.get('/api/plugin/status', async (_req: Request, res: Response): Promise<void
   });
 });
 
-// 1c-2. Plugin Intake Lead Submission Endpoint
+// 1c-2. Plugin Intake Lead Submission Endpoint (Enforces E.164 & Intake TCPA Consent)
 app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
   const { leadId, name, email, phone, intakeAnswers, smsConsentAuthorized, smsConsentTimestamp, pairingId, campaignTag } = req.body;
   if (!name || !email || !phone) {
@@ -305,9 +316,20 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
     return;
   }
 
+  // E.164 validation: fail closed on malformed phone numbers
+  const phoneCheck = validateAndFormatE164(phone);
+  if (!phoneCheck.valid || !phoneCheck.e164) {
+    res.status(400).json({
+      error: phoneCheck.error || 'Invalid phone number: valid 10-digit US phone required.',
+      code: 'INVALID_PHONE_E164'
+    });
+    return;
+  }
+
   const safeName = sanitizePiiInput(name);
   const normalizedEmail = email.toLowerCase().trim();
-  const safePhone = sanitizePiiInput(phone);
+  const phoneE164 = phoneCheck.e164;
+  const clientIp = getClientIp(req);
 
   const db = getAdminFirestore();
   if (!db) {
@@ -317,14 +339,27 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
 
   try {
     const targetLeadId = leadId || `lead-${Date.now()}`;
+
+    // Record TCPA Consent if opted in (Intake is the ONLY valid text consent)
+    let tcpaRecord = null;
+    if (smsConsentAuthorized) {
+      tcpaRecord = await recordIntakeTcpaConsent({
+        leadId: targetLeadId,
+        rawPhone: phoneE164,
+        ipAddress: clientIp
+      });
+    }
+
     const leadRecord = {
       leadId: targetLeadId,
       name: safeName,
       email: normalizedEmail,
-      phone: safePhone,
+      phone: phoneE164,
+      phoneE164,
       intakeAnswers: intakeAnswers || {},
       smsConsentAuthorized: Boolean(smsConsentAuthorized),
       smsConsentTimestamp: smsConsentAuthorized ? (smsConsentTimestamp || new Date().toISOString()) : null,
+      tcpaConsent: tcpaRecord || null,
       pairingId: pairingId || null,
       campaignTag: campaignTag || '',
       createdAt: new Date().toISOString(),
@@ -346,14 +381,24 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
     recordAuditLedger({
       leadId: targetLeadId,
       actionType: 'PLUGIN_INTAKE_SUBMITTED',
-      ipAddress: getClientIp(req),
-      redactedPayload: { name: safeName, email: normalizedEmail, smsConsent: Boolean(smsConsentAuthorized) }
+      ipAddress: clientIp,
+      redactedPayload: {
+        name: safeName,
+        email: normalizedEmail,
+        smsConsent: Boolean(smsConsentAuthorized),
+        phoneE164
+      }
     });
 
-    res.json({ success: true, leadId: targetLeadId });
+    res.json({
+      success: true,
+      leadId: targetLeadId,
+      phoneE164,
+      tcpaConsented: Boolean(smsConsentAuthorized)
+    });
   } catch (err: any) {
     console.error('[Plugin Intake Error]', err.message);
-    res.status(500).json({ error: 'Intake submission failed' });
+    res.status(500).json({ error: 'Intake submission failed: ' + err.message });
   }
 });
 
@@ -683,7 +728,7 @@ app.get('/api/notes/:propertyId/:leadId', requireBuyerSession(getBuyerSession), 
   res.json(thread);
 });
 
-// 8. Add Property Note (Server write with TCPA & Audit Ledger logging + Daily Cap)
+// 8. Add Property Note (Server write with in-app reply notification preferences + Daily Cap)
 app.post('/api/notes', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const ip = getClientIp(req);
   const sensitiveCheck = rateLimitSensitive(ip);
@@ -696,7 +741,7 @@ app.post('/api/notes', requirePluginOperational, requireBuyerSession(getBuyerSes
     return;
   }
 
-  const { propertyId, leadId, authorName, text, tcpaAccepted } = req.body;
+  const { propertyId, leadId, authorName, text, inAppReplyNotify, tcpaAccepted } = req.body;
   if (!propertyId || !leadId || !text) {
     res.status(400).json({ error: 'propertyId, leadId, and text are required' });
     return;
@@ -717,13 +762,15 @@ app.post('/api/notes', requirePluginOperational, requireBuyerSession(getBuyerSes
     return;
   }
 
+  const notifyPref = inAppReplyNotify !== undefined ? Boolean(inAppReplyNotify) : (tcpaAccepted !== undefined ? Boolean(tcpaAccepted) : true);
+
   const { note, aiReply } = await addPropertyNote({
     propertyId,
     leadId,
     authorName: typeof authorName === 'string' ? authorName.substring(0, 100) : authorName,
     text: typeof text === 'string' ? text.substring(0, 500) : text,
     ipAddress: ip,
-    tcpaAccepted: Boolean(tcpaAccepted)
+    inAppReplyNotify: notifyPref
   });
 
   res.json({ success: true, note, aiReply });
@@ -770,9 +817,20 @@ app.get('/api/mike/inbox', requireStaffRole('master_admin', 'admin', 'loan_offic
     // 3. PII Masking: mask email/phone for auditor, IT tester, branch manager, or unassigned LO
     const maskedConversations = scopedConversations.map(c => maskBuyerPii(c, staff));
 
+    // 4. Attach TCPA text consent badge per lead (reads from TCPA consent records ONLY)
+    const conversationsWithTcpa = await Promise.all(
+      maskedConversations.map(async (c) => {
+        const tcpaBadge = await getLeadTcpaConsentBadge(c.leadId);
+        return {
+          ...c,
+          tcpaBadge
+        };
+      })
+    );
+
     res.json({
-      totalCount: maskedConversations.length,
-      conversations: maskedConversations
+      totalCount: conversationsWithTcpa.length,
+      conversations: conversationsWithTcpa
     });
   } catch (err: any) {
     console.error('[Mike Inbox Error]', err);

@@ -65,18 +65,29 @@ export default function BuyerIntakeChatbot({ leadId, pairing, onIntakeCompleted 
   useEffect(() => {
     if (!isOpen || typeof document === 'undefined') return;
 
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const originalBodyPosition = document.body.style.position;
+    const originalBodyTop = document.body.style.top;
+    const originalBodyWidth = document.body.style.width;
     const originalBodyOverflow = document.body.style.overflow;
     const originalBodyOverscroll = document.body.style.overscrollBehavior;
     const originalHtmlOverflow = document.documentElement.style.overflow;
 
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
     document.body.style.overflow = 'hidden';
     document.body.style.overscrollBehavior = 'none';
     document.documentElement.style.overflow = 'hidden';
 
     return () => {
+      document.body.style.position = originalBodyPosition;
+      document.body.style.top = originalBodyTop;
+      document.body.style.width = originalBodyWidth;
       document.body.style.overflow = originalBodyOverflow;
       document.body.style.overscrollBehavior = originalBodyOverscroll;
       document.documentElement.style.overflow = originalHtmlOverflow;
+      window.scrollTo(0, scrollY);
     };
   }, [isOpen]);
 
@@ -652,7 +663,7 @@ export default function BuyerIntakeChatbot({ leadId, pairing, onIntakeCompleted 
                         className="mt-0.5 rounded accent-cyan-500 w-4 h-4 flex-shrink-0 cursor-pointer"
                       />
                       <span className="text-[10px] text-slate-300 leading-relaxed">
-                        Yes — I agree to receive text messages about my home search, curated homes, and two-way messages with my loan officer and paired agent, including replies to my property notes. Message & data rates may apply. Reply STOP to opt out at any time. Consent is not a condition of purchase.
+                        By providing your phone number, you agree to receive text messages from Mike Ford and paired agents about properties and your homebuying journey. Message and data rates may apply. Reply STOP to opt out at any time. Consent is not a condition of purchase.
                       </span>
                     </label>
                   </div>

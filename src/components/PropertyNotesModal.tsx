@@ -35,7 +35,7 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
   const [thread, setThread] = useState<PropertyThread | null>(null);
   const [noteText, setNoteText] = useState('');
   const [authorName, setAuthorName] = useState('Buyer');
-  const [tcpaAccepted, setTcpaAccepted] = useState(true);
+  const [inAppReplyNotify, setInAppReplyNotify] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -102,7 +102,7 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
         leadId,
         authorName,
         text: noteText.trim(),
-        tcpaAccepted,
+        inAppReplyNotify,
         signal: controller.signal
       });
 
@@ -340,7 +340,7 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
           </div>
         )}
 
-        {/* Input Form & TCPA Consent */}
+        {/* Input Form & In-App Reply Notification */}
         <form onSubmit={handleSubmit} className="p-4 bg-slate-950 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center space-x-2">
             <input
@@ -397,13 +397,13 @@ export const PropertyNotesModal: React.FC<PropertyNotesModalProps> = ({
           <div className="flex items-start space-x-2 text-[10px] text-slate-400">
             <input
               type="checkbox"
-              id="tcpa-checkbox"
-              checked={tcpaAccepted}
-              onChange={(e) => setTcpaAccepted(e.target.checked)}
+              id="in-app-reply-notify-checkbox"
+              checked={inAppReplyNotify}
+              onChange={(e) => setInAppReplyNotify(e.target.checked)}
               className="mt-0.5 rounded border-slate-700 bg-slate-900 text-cyan-600"
             />
-            <label htmlFor="tcpa-checkbox" className="leading-tight">
-              I agree to receive communications regarding this property from Mike Ford (NMLS #288455) and paired agents. Stamped in compliance audit ledger.
+            <label htmlFor="in-app-reply-notify-checkbox" className="leading-tight">
+              Notify me in the app when Mike or a paired agent replies about this property.
             </label>
           </div>
         </form>

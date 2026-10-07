@@ -103,18 +103,29 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
   useEffect(() => {
     if (!isOpen || typeof document === 'undefined') return;
 
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const originalBodyPosition = document.body.style.position;
+    const originalBodyTop = document.body.style.top;
+    const originalBodyWidth = document.body.style.width;
     const originalBodyOverflow = document.body.style.overflow;
     const originalBodyOverscroll = document.body.style.overscrollBehavior;
     const originalHtmlOverflow = document.documentElement.style.overflow;
 
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
     document.body.style.overflow = 'hidden';
     document.body.style.overscrollBehavior = 'none';
     document.documentElement.style.overflow = 'hidden';
 
     return () => {
+      document.body.style.position = originalBodyPosition;
+      document.body.style.top = originalBodyTop;
+      document.body.style.width = originalBodyWidth;
       document.body.style.overflow = originalBodyOverflow;
       document.body.style.overscrollBehavior = originalBodyOverscroll;
       document.documentElement.style.overflow = originalHtmlOverflow;
+      window.scrollTo(0, scrollY);
     };
   }, [isOpen]);
 
@@ -343,39 +354,31 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
         <>
           {/* Backdrop shield on mobile & desktop to prevent background touch & scroll pass-through */}
           <div
-            className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 transition-opacity animate-fade-in"
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 transition-opacity animate-fade-in touch-none select-none"
             onClick={() => setIsOpen(false)}
-            onTouchMove={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
             aria-hidden="true"
           />
 
           <div
             className={`fixed z-50 font-sans transition-all duration-300 ${
               isMaximized
-                ? 'inset-2 sm:inset-6'
-                : 'inset-x-0 bottom-0 sm:inset-auto sm:bottom-5 sm:right-5 w-full sm:w-[440px] h-[94dvh] sm:h-[680px] max-h-[100dvh]'
-            } bg-slate-900 border-t sm:border border-slate-700/80 rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden text-white overscroll-contain`}
+                ? 'inset-0 sm:inset-6'
+                : 'inset-0 sm:inset-auto sm:bottom-5 sm:right-5 w-full sm:w-[450px] h-full sm:h-[680px] sm:max-h-[88vh]'
+            } bg-slate-900 border-0 sm:border border-slate-700/80 rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden text-white overscroll-contain`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Mobile Sheet Pull Indicator & Touch Shield */}
             <div
-              className="sm:hidden flex justify-center items-center pt-2.5 pb-1 bg-gradient-to-r from-slate-900 via-[#27352b] to-slate-900 shrink-0 touch-none select-none cursor-pointer"
+              className="sm:hidden flex flex-col items-center pt-[max(0.625rem,env(safe-area-inset-top,0px))] pb-1 bg-gradient-to-r from-slate-900 via-[#27352b] to-slate-900 shrink-0 touch-none select-none cursor-pointer"
               onClick={() => setIsOpen(false)}
-              onTouchMove={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
+              title="Tap to close"
             >
-              <div className="w-10 h-1 bg-slate-600 rounded-full" />
+              <div className="w-12 h-1.5 bg-slate-600/80 rounded-full" />
             </div>
 
             {/* 2a. Co-Branded Header Bar */}
             <div
               className="bg-gradient-to-r from-slate-900 via-[#27352b] to-slate-900 border-b border-emerald-600/30 px-4 py-3 flex items-center justify-between shrink-0 touch-none select-none"
-              onTouchMove={(e) => e.stopPropagation()}
             >
               <div className="flex items-center space-x-3 min-w-0">
                 {/* Headshots */}
@@ -427,8 +430,9 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </button>
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="p-1.5 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                  className="p-2 sm:p-1.5 hover:text-white rounded-xl bg-slate-800/80 sm:bg-transparent hover:bg-slate-800 text-slate-300 transition-colors active:scale-95"
                   title="Close"
+                  aria-label="Close Chat"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -438,7 +442,6 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
             {/* 2b. Bank-Grade Security Sub-Badge */}
             <div
               className="bg-[#1c2820] border-b border-emerald-500/20 px-4 py-1.5 flex items-center justify-between text-[11px] text-emerald-300 shrink-0 touch-none select-none"
-              onTouchMove={(e) => e.stopPropagation()}
             >
               <span className="flex items-center space-x-1.5 font-medium">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -446,10 +449,14 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
               </span>
             </div>
 
-            {/* 3. Conversational Message Flow */}
+            {/* 3. Conversational Message Flow with Isolated Scroll */}
             <div
-              className="flex-1 min-h-0 p-4 overflow-y-auto space-y-4 bg-slate-950/70 text-sm overscroll-contain scroll-smooth"
-              style={{ WebkitOverflowScrolling: 'touch' }}
+              className="flex-1 min-h-0 p-3.5 sm:p-4 overflow-y-auto space-y-4 bg-slate-950/70 text-sm overscroll-contain touch-pan-y scroll-smooth"
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                overscrollBehavior: 'contain',
+                overscrollBehaviorY: 'contain'
+              }}
             >
             {/* Opening Welcome Bubble */}
             <div className="flex items-start space-x-2.5">
@@ -491,7 +498,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 1 ? (
-                  <div className="grid grid-cols-1 gap-2 pl-10">
+                  <div className="grid grid-cols-1 gap-2 pl-1.5 sm:pl-10">
                     {[
                       { title: 'Ready Now (30-60 Days)', desc: 'Actively searching' },
                       { title: '3 to 6 Months Out', desc: 'Planning & saving' },
@@ -517,7 +524,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>{timeline}</span>
@@ -541,7 +548,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 2 ? (
-                  <div className="grid grid-cols-1 gap-2 pl-10">
+                  <div className="grid grid-cols-1 gap-2 pl-1.5 sm:pl-10">
                     {[
                       { title: '$300k - $450k', desc: 'Est. $2,200 - $3,100/mo' },
                       { title: '$450k - $600k', desc: 'Est. $3,100 - $4,100/mo' },
@@ -567,7 +574,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>{budget}</span>
@@ -591,7 +598,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 3 ? (
-                  <div className="grid grid-cols-1 gap-2 pl-10">
+                  <div className="grid grid-cols-1 gap-2 pl-1.5 sm:pl-10">
                     {[
                       { title: '3% to 5% Down ($12k - $25k)', desc: 'Conventional 97 / FHA' },
                       { title: '10% to 20%+ Down ($45k+)', desc: 'Lower monthly PMI' },
@@ -617,7 +624,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>{downPayment}</span>
@@ -641,7 +648,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 4 ? (
-                  <div className="grid grid-cols-1 gap-2 pl-10">
+                  <div className="grid grid-cols-1 gap-2 pl-1.5 sm:pl-10">
                     {[
                       { title: 'Excellent (740+)', desc: 'Best interest rates' },
                       { title: 'Good (680 - 739)', desc: 'Strong conventional terms' },
@@ -667,7 +674,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>{creditTier}</span>
@@ -691,7 +698,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 5 ? (
-                  <div className="pl-10 space-y-3 bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl">
+                  <div className="pl-1.5 sm:pl-10 space-y-3 bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-slate-300 font-medium">Income Slider:</span>
                       <input
@@ -740,7 +747,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>${annualIncome.toLocaleString()}/yr</span>
@@ -764,7 +771,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 6 ? (
-                  <div className="pl-10 space-y-3 bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl">
+                  <div className="pl-1.5 sm:pl-10 space-y-3 bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl">
                     {/* Search & Custom input */}
                     <div className="flex gap-1.5">
                       <div className="relative flex-1">
@@ -827,7 +834,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>{selectedCities.join(', ')}</span>
@@ -855,7 +862,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                 </div>
 
                 {currentStep === 7 ? (
-                  <div className="grid grid-cols-1 gap-2 pl-10">
+                  <div className="grid grid-cols-1 gap-2 pl-1.5 sm:pl-10">
                     <button
                       type="button"
                       onClick={() => {
@@ -890,7 +897,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <div className="pl-10 flex justify-end">
+                  <div className="pl-1.5 sm:pl-10 flex justify-end">
                     <div className="bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-sm">
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                       <span>{sampleHomesWanted ? 'Curated homes requested' : 'Blueprint only'}</span>
@@ -902,7 +909,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
 
             {/* STEP 8: CONTACT INFORMATION & TCPA SMS CONSENT */}
             {currentStep >= 8 && currentStep < 9 && (
-              <div className="space-y-3 pl-10">
+              <div className="space-y-3 pl-1.5 sm:pl-10">
                 <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-3">
                   <div className="border-b border-slate-800 pb-2">
                     <h4 className="text-xs font-bold text-emerald-300 flex items-center space-x-1.5">
@@ -1015,10 +1022,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                           className="mt-0.5 rounded accent-emerald-500 w-4 h-4 shrink-0 cursor-pointer"
                         />
                         <span className="text-[10px] text-slate-300 leading-relaxed">
-                          I agree to receive automated SMS updates, home listing alerts, and
-                          pre-approval status notifications from the Loan Officer &amp; Realtor team
-                          at the number provided. Msg &amp; data rates may apply. Reply STOP to
-                          cancel.
+                          By providing your phone number, you agree to receive text messages from Mike Ford and paired agents about properties and your homebuying journey. Message and data rates may apply. Reply STOP to opt out at any time. Consent is not a condition of purchase.
                         </span>
                       </label>
                     </div>

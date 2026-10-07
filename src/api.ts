@@ -308,9 +308,11 @@ export async function postPropertyNote(params: {
   leadId: string;
   authorName: string;
   text: string;
-  tcpaAccepted: boolean;
+  inAppReplyNotify?: boolean;
+  tcpaAccepted?: boolean;
   signal?: AbortSignal;
 }): Promise<any> {
+  const notify = params.inAppReplyNotify ?? params.tcpaAccepted ?? true;
   const res = await fetchWithTimeout(
     '/api/notes',
     {
@@ -321,7 +323,7 @@ export async function postPropertyNote(params: {
         leadId: params.leadId,
         authorName: params.authorName,
         text: params.text,
-        tcpaAccepted: params.tcpaAccepted
+        inAppReplyNotify: notify
       })
     },
     DEFAULT_API_TIMEOUT_MS,

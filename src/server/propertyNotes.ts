@@ -30,6 +30,7 @@ export interface PropertyNoteMessage {
   tier?: 1 | 2;
   citations?: string[];
   isAi?: boolean;
+  inAppReplyNotify?: boolean;
 }
 
 export interface PropertyThread {
@@ -42,6 +43,7 @@ export interface PropertyThread {
   messages: PropertyNoteMessage[];
   loProfile: LoanOfficerProfile;
   agentProfile: AgentProfile | null;
+  inAppReplyNotify?: boolean;
 }
 
 // In-memory cache for fast hot-path retrieval (mirrored to Firestore property_threads)
@@ -234,7 +236,11 @@ Want Mike Ford (NMLS #288455) to review your personal scenario or give you a qui
 
 /**
  * Adds a buyer property note with Tier 1/2 triage, PII sanitization,
- * TCPA audit stamping, and persistent Firestore write.
+ * in-app reply notification preferences, and persistent Firestore write.
+ * 
+ * COMPLIANCE LAW:
+ * Property note checkbox is strictly in-app reply confirmation. It is NOT
+ * TCPA text consent, captures no phone number, and NEVER stamps TCPA_OPT_IN.
  */
 export async function addPropertyNote(params: {
   propertyId: string;
@@ -242,33 +248,28 @@ export async function addPropertyNote(params: {
   authorName: string;
   text: string;
   ipAddress: string;
-  tcpaAccepted?: boolean;
+  inAppReplyNotify?: boolean;
+  tcpaAccepted?: boolean; // legacy alias
 }): Promise<{ note: PropertyNoteMessage; aiReply?: PropertyNoteMessage | null }> {
-  const { propertyId, leadId, authorName, text, ipAddress, tcpaAccepted } = params;
+  const { propertyId, leadId, authorName, text, ipAddress } = params;
+  const inAppReplyNotify = Boolean(params.inAppReplyNotify ?? params.tcpaAccepted ?? true);
   const thread = await getOrCreatePropertyThread(propertyId, leadId);
   // Zero-trust PII sanitization + 500 char defensive length cap
   const cleanText = sanitizePiiInput(text).substring(0, 500);
 
   const actionCheck = detectBuyerActionItems(cleanText);
 
-  // If TCPA opt-in was checked, record in audit ledger
-  if (tcpaAccepted) {
-    recordAuditLedger({
-      leadId,
-      actionType: 'TCPA_OPT_IN',
-      propertyId,
-      ipAddress,
-      redactedPayload: { authorName: sanitizePiiInput(authorName), textPreview: cleanText.substring(0, 40) }
-    });
-  }
-
-  // Record buyer note in audit ledger
+  // Record buyer note in audit ledger (strictly as in-app property note, NEVER TCPA text consent)
   recordAuditLedger({
     leadId,
     actionType: 'PROPERTY_NOTE',
     propertyId,
     ipAddress,
-    redactedPayload: { authorName: sanitizePiiInput(authorName), isQuestion: actionCheck.isQuestion }
+    redactedPayload: {
+      authorName: sanitizePiiInput(authorName),
+      isQuestion: actionCheck.isQuestion,
+      inAppReplyNotify
+    }
   });
 
   const noteMsg: PropertyNoteMessage = {
@@ -278,10 +279,12 @@ export async function addPropertyNote(params: {
     text: cleanText,
     timestamp: new Date().toISOString(),
     isQuestion: actionCheck.isQuestion,
-    actionCategory: actionCheck.actionCategory
+    actionCategory: actionCheck.actionCategory,
+    inAppReplyNotify
   };
 
   thread.messages.push(noteMsg);
+  thread.inAppReplyNotify = inAppReplyNotify;
   thread.updatedAt = new Date().toISOString();
 
   let aiReplyMsg: PropertyNoteMessage | null = null;

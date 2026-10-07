@@ -127,6 +127,7 @@ export interface PropertyNoteMessage {
   tier?: 1 | 2;
   isAi?: boolean;
   citations?: string[];
+  inAppReplyNotify?: boolean;
 }
 
 export interface PropertyThread {
@@ -138,6 +139,7 @@ export interface PropertyThread {
   updatedAt: string;
   messages: PropertyNoteMessage[];
   loProfile: LoanOfficerProfile;
+  inAppReplyNotify?: boolean;
   agentProfile: AgentProfile | null;
 }
 
