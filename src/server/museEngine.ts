@@ -14,6 +14,7 @@ import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAudit
 import { calculateCostOfWaiting, formatCostOfWaitingForMuse } from './costOfWaiting.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './firebaseAdmin.ts';
 import { getPairingDetails, type PairingDetails } from './agentPairings.ts';
+import { PLUGIN_SOURCE_REGISTRY } from './sourceRegistry.ts';
 
 export interface ChatMessage {
   id: string;
@@ -121,9 +122,14 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
         statedPreferences: session.statedPreferences,
         email: session.email || null,
         phone: session.phone || null,
-        source: 'plugin-chat',
         updatedAt: new Date().toISOString()
       };
+
+      // First-Touch Attribution Binding: stamp source & sourceLabel ONLY if lead does not exist or carries no source
+      if (!existingData || !existingData.source) {
+        mirrorData.source = PLUGIN_SOURCE_REGISTRY['plugin-chat'].source;
+        mirrorData.sourceLabel = PLUGIN_SOURCE_REGISTRY['plugin-chat'].sourceLabel;
+      }
 
       if (!existingData || !existingData.status) {
         mirrorData.status = 'new';

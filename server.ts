@@ -12,6 +12,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
 import { getPairingDetails, getPairingOwnerLoId } from './src/server/agentPairings.ts';
+import { PLUGIN_SOURCE_REGISTRY } from './src/server/sourceRegistry.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './src/server/firebaseAdmin.ts';
 import {
   requireBuyerSession,
@@ -271,15 +272,27 @@ app.post('/api/auth/identify', requirePluginOperational, async (req: Request, re
     session.email = normalizedEmail;
     session.statedPreferences.email = normalizedEmail;
 
-    safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set({
+    // Check existing lead doc to preserve First-Touch Attribution Binding
+    const targetDoc = await db.collection('leads').doc(targetLeadId).get().catch(() => null);
+    const targetData = targetDoc?.exists ? targetDoc.data() : null;
+
+    const emailLeadPayload: Record<string, any> = {
       id: targetLeadId,
       leadId: targetLeadId,
       email: normalizedEmail,
-      source: 'plugin-email-link',
       statedPreferences: session.statedPreferences,
-      createdAt: session.createdAt,
+      createdAt: targetData?.createdAt || session.createdAt,
       updatedAt: new Date().toISOString()
-    }, { merge: true }), 1500).catch(err => console.warn('[Leads Write Warning]', err.message));
+    };
+
+    // First-Touch Attribution Binding: stamp source & sourceLabel ONLY if target lead has no source yet
+    if (!targetData || !targetData.source) {
+      emailLeadPayload.source = PLUGIN_SOURCE_REGISTRY['plugin-email-link'].source;
+      emailLeadPayload.sourceLabel = PLUGIN_SOURCE_REGISTRY['plugin-email-link'].sourceLabel;
+    }
+
+    safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set(emailLeadPayload, { merge: true }), 1500)
+      .catch(err => console.warn('[Leads Write Warning]', err.message));
 
     safeFirestoreWrite(db.collection('fthb_conversations').doc(targetLeadId).set({
       email: normalizedEmail,
@@ -358,6 +371,10 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
     const effectivePairingId = pairingId || process.env.PAIRING_ID || process.env.DEFAULT_PAIRING_ID || process.env.INSTANCE_PAIRING_ID || null;
     const resolvedOwnerLoId = await getPairingOwnerLoId(effectivePairingId);
 
+    // Read existing lead document to observe First-Touch Attribution Binding & preserve status/owner/TCPA
+    const existingDoc = await db.collection('leads').doc(targetLeadId).get().catch(() => null);
+    const existingData = existingDoc?.exists ? existingDoc.data() : null;
+
     const leadRecord: Record<string, any> = {
       leadId: targetLeadId,
       name: safeName,
@@ -370,13 +387,24 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
       tcpaConsent: tcpaRecord || null,
       pairingId: effectivePairingId,
       campaignTag: campaignTag || '',
-      createdAt: new Date().toISOString(),
-      source: 'plugin-chatbot',
-      sourceLabel: 'FTHB House Finder plugin: Chatbot',
-      status: 'new'
+      createdAt: existingData?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // First-Touch Attribution Binding: preserve existing source & sourceLabel if present
+      source: existingData?.source || PLUGIN_SOURCE_REGISTRY['plugin-chatbot'].source,
+      sourceLabel: existingData?.sourceLabel || PLUGIN_SOURCE_REGISTRY['plugin-chatbot'].sourceLabel
     };
 
-    if (resolvedOwnerLoId) {
+    // Preserve existing status if present; otherwise set to 'new'
+    if (existingData?.status) {
+      leadRecord.status = existingData.status;
+    } else {
+      leadRecord.status = 'new';
+    }
+
+    // Preserve existing ownerLoId if present; otherwise set resolvedOwnerLoId
+    if (existingData?.ownerLoId) {
+      leadRecord.ownerLoId = existingData.ownerLoId;
+    } else if (resolvedOwnerLoId) {
       leadRecord.ownerLoId = resolvedOwnerLoId;
     }
 
