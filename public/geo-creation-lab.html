@@ -136,6 +136,31 @@ const routeCurve=new THREE.CatmullRomCurve3(routePts);
 const routeTube=new THREE.Mesh(new THREE.TubeGeometry(routeCurve,80,.025,6,false),new THREE.MeshBasicMaterial({color:0x55dfff,transparent:true,opacity:.75}));
 routeTube.visible=false;scene.add(routeTube);
 
+// Four curated-home stops for the Saturday open-house quest.
+const homeStops = [
+  {t:.12, label:'HOME 1', color:0xffd45c},
+  {t:.36, label:'HOME 2', color:0x55dfff},
+  {t:.61, label:'HOME 3', color:0xff826b},
+  {t:.84, label:'HOME 4', color:0x55e39a}
+];
+const stopGroup=new THREE.Group(); scene.add(stopGroup);
+homeStops.forEach((stop,i)=>{
+  const p=routeCurve.getPointAt(stop.t);
+  const marker=new THREE.Mesh(
+    new THREE.CylinderGeometry(.16,.16,.06,24),
+    new THREE.MeshBasicMaterial({color:stop.color,transparent:true,opacity:.92})
+  );
+  marker.position.set(p.x,-.86,p.z);
+  marker.userData.stop=i;
+  stopGroup.add(marker);
+  const ring=new THREE.Mesh(
+    new THREE.RingGeometry(.22,.28,32),
+    new THREE.MeshBasicMaterial({color:stop.color,transparent:true,opacity:.48,side:THREE.DoubleSide})
+  );
+  ring.rotation.x=-Math.PI/2; ring.position.set(p.x,-.84,p.z); ring.userData.stop=i; stopGroup.add(ring);
+});
+stopGroup.visible=false;
+
 const states={
  idle:{label:'READY · IDLE',color:0x20e0c2,text:'“Hey! I found a home worth exploring. Want to take a look?”'},
  thinking:{label:'MUSE · THINKING',color:0xa78bfa,text:'“Hmm… let me connect that question with what we already know.”'},
@@ -161,6 +186,7 @@ function setState(next){
  const c=new THREE.Color(s.color);pinMat.color.copy(c);pinMat.emissive.copy(c);pinLight.color.copy(c);rim.color.copy(c);
  car.visible=next==='drive'||next==='saturday'||next==='arrive';routeTube.visible=car.visible;
  if(next==='drive'||next==='saturday')routeT=0;
+ stopGroup.visible=next==='saturday'||next==='drive'||next==='arrive';
  if(next==='celebrate'||next==='top3')burst();
 }
 
@@ -209,19 +235,29 @@ function animate(){
    routeT=(routeT+dt*.032)%1;
    const p=routeCurve.getPointAt(routeT),p2=routeCurve.getPointAt(Math.min(routeT+.01,1));
    car.position.copy(p);car.lookAt(p2);car.rotation.y+=Math.PI/2;
-   geo.position.y=.15+Math.sin(t*7)*.02;
-   geo.rotation.y=Math.sin(t*5)*.04;
+   // Geo crouches into the vehicle and rides with it; keep Geo independent so idle mode never disappears.
+   geo.position.set(p.x,p.y+1.03,p.z);
+   geo.rotation.y=car.rotation.y;
+   geo.rotation.x=-.08+Math.sin(t*7)*.025;
+   geo.scale.set(.82,.78,.82);
  }
  if(state==='drive'){
    routeT=(routeT+dt*.055)%1;
    const p=routeCurve.getPointAt(routeT),p2=routeCurve.getPointAt(Math.min(routeT+.01,1));
    car.position.copy(p);car.lookAt(p2);car.rotation.y+=Math.PI/2;
-   geo.position.y=.15+Math.sin(t*7)*.02;
-   geo.rotation.y=Math.sin(t*5)*.04;
+   geo.position.set(p.x,p.y+1.03,p.z);
+   geo.rotation.y=car.rotation.y;
+   geo.rotation.x=-.08+Math.sin(t*7)*.025;
+   geo.scale.set(.82,.78,.82);
+ }
+ if(state!=='drive'&&state!=='saturday'){
+   geo.scale.lerp(new THREE.Vector3(1,1,1),.12);
+   geo.rotation.x=THREE.MathUtils.lerp(geo.rotation.x,0,.12);
  }
  if(state==='arrive'){
    geo.position.y=.15+Math.abs(Math.sin(t*5))*.13;
    geo.rotation.y=Math.sin(t*4)*.15;
+   geo.scale.lerp(new THREE.Vector3(1,1,1),.12);
  }
  // tiny pin breathing
  pinLight.intensity=2.7+Math.sin(t*5)*.7;
