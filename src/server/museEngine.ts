@@ -109,7 +109,11 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
 
     // If a curation request was made, mirror to the leads collection for Mike's queue
     if (session.leadCurationRequest) {
-      safeFirestoreWrite(db.collection('leads').doc(session.leadId).set({
+      const leadRef = db.collection('leads').doc(session.leadId);
+      const existingDoc = await leadRef.get().catch(() => null);
+      const existingData = existingDoc?.exists ? existingDoc.data() : null;
+
+      const mirrorData: Record<string, any> = {
         id: session.leadId,
         leadId: session.leadId,
         leadCurationRequest: session.leadCurationRequest,
@@ -119,7 +123,13 @@ async function saveConversationToFirestore(session: BuyerSessionState): Promise<
         phone: session.phone || null,
         source: 'plugin-chat',
         updatedAt: new Date().toISOString()
-      }, { merge: true }), 1500).catch(err => {
+      };
+
+      if (!existingData || !existingData.status) {
+        mirrorData.status = 'new';
+      }
+
+      safeFirestoreWrite(leadRef.set(mirrorData, { merge: true }), 1500).catch(err => {
         console.warn('[Leads Mirror Warning]', err.message);
       });
     }

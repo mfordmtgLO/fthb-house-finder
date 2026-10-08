@@ -449,55 +449,6 @@ export async function fetchMikeInbox(token?: string, signal?: AbortSignal): Prom
   return res.json();
 }
 
-export async function fetchLoConversation(leadId: string, token?: string, signal?: AbortSignal): Promise<{
-  leadId: string;
-  totalMessages: number;
-  conversation: any;
-}> {
-  const authToken = token || 'fordmj@gmail.com';
-  const res = await fetchWithTimeout(
-    `/api/lo/conversation/${encodeURIComponent(leadId)}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${authToken}`
-      }
-    },
-    DEFAULT_API_TIMEOUT_MS,
-    signal
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to fetch conversation');
-  }
-
-  return res.json();
-}
-
-export async function fetchAuditLedger(token?: string, signal?: AbortSignal): Promise<{
-  totalCount: number;
-  entries: any[];
-}> {
-  const authToken = token || 'fordmj@gmail.com';
-  const res = await fetchWithTimeout(
-    '/api/lo/audit-ledger',
-    {
-      headers: {
-        'Authorization': `Bearer ${authToken}`
-      }
-    },
-    DEFAULT_API_TIMEOUT_MS,
-    signal
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to fetch audit ledger');
-  }
-
-  return res.json();
-}
-
 export async function fetchStaffRoster(token?: string, signal?: AbortSignal): Promise<{
   totalCount: number;
   staff: any[];

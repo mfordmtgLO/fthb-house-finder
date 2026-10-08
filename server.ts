@@ -355,7 +355,9 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
       });
     }
 
-    const leadRecord = {
+    const effectivePairingId = pairingId || process.env.PAIRING_ID || process.env.DEFAULT_PAIRING_ID || process.env.INSTANCE_PAIRING_ID || null;
+
+    const leadRecord: Record<string, any> = {
       leadId: targetLeadId,
       name: safeName,
       email: normalizedEmail,
@@ -365,10 +367,12 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
       smsConsentAuthorized: Boolean(smsConsentAuthorized),
       smsConsentTimestamp: smsConsentAuthorized ? (smsConsentTimestamp || new Date().toISOString()) : null,
       tcpaConsent: tcpaRecord || null,
-      pairingId: pairingId || null,
+      pairingId: effectivePairingId,
       campaignTag: campaignTag || '',
       createdAt: new Date().toISOString(),
-      source: 'plugin-chatbot'
+      source: 'plugin-chatbot',
+      sourceLabel: 'FTHB House Finder plugin: Chatbot',
+      status: 'new'
     };
 
     await safeFirestoreWrite(db.collection('plugin_leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);

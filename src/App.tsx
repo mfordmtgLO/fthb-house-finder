@@ -24,7 +24,6 @@ import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
 import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
 import { IdentifyModal } from './components/IdentifyModal';
 import LeadIntakeChatbot from './components/LeadIntakeChatbot';
-import { LoanOfficerDashboard } from './components/LoanOfficerDashboard';
 import {
   Home,
   ShieldCheck,
@@ -41,45 +40,9 @@ import {
   Mail
 } from 'lucide-react';
 
-function getInitialAppMode(): 'plugin' | 'dashboard' {
-  if (typeof window === 'undefined') return 'plugin';
-  const path = window.location.pathname.toLowerCase();
-  const params = new URLSearchParams(window.location.search);
-  const viewParam = (params.get('view') || params.get('mode') || '').toLowerCase();
-
-  if (
-    path.startsWith('/dashboard') ||
-    path.startsWith('/me-dashboard') ||
-    path.startsWith('/lo-dashboard') ||
-    viewParam === 'dashboard' ||
-    viewParam === 'me-dashboard' ||
-    viewParam === 'me'
-  ) {
-    return 'dashboard';
-  }
-  return 'plugin';
-}
-
 export default function App() {
-  const [appMode, setAppMode] = useState<'plugin' | 'dashboard'>(getInitialAppMode);
   const [leadId, setLeadId] = useState<string>('');
   const [buyerEmail, setBuyerEmail] = useState<string>('');
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setAppMode(getInitialAppMode());
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
-
-  const navigateToMode = (newMode: 'plugin' | 'dashboard') => {
-    setAppMode(newMode);
-    if (typeof window !== 'undefined') {
-      const targetPath = newMode === 'dashboard' ? '/dashboard' : '/plugin';
-      window.history.pushState({}, '', targetPath);
-    }
-  };
   const [pairing, setPairing] = useState<any | null>(null);
   const [disclaimerServed, setDisclaimerServed] = useState<boolean>(false);
   const [pluginStatus, setPluginStatus] = useState<'active' | 'suspended' | 'killed'>('active');
@@ -276,15 +239,6 @@ export default function App() {
     setIsSidebarOpen(false); // Close sidebar on mobile so map is immediately visible
   };
 
-  // Render Loan Officer Executive Dashboard when in dashboard mode
-  if (appMode === 'dashboard') {
-    return (
-      <LoanOfficerDashboard
-        onSwitchToPlugin={() => navigateToMode('plugin')}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       {/* Top Header */}
@@ -303,7 +257,6 @@ export default function App() {
         onOpenInstallGuide={() => setIsInstallGuideOpen(true)}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
         onOpenUsdaAdjuster={() => setIsUsdaAdjusterOpen(true)}
-        onSwitchToDashboard={() => navigateToMode('dashboard')}
         isSidebarOpen={isSidebarOpen}
         setIsSidebarOpen={setIsSidebarOpen}
         disclaimerServed={disclaimerServed}
