@@ -11,7 +11,7 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
-import { getPairingDetails } from './src/server/agentPairings.ts';
+import { getPairingDetails, getPairingOwnerLoId } from './src/server/agentPairings.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './src/server/firebaseAdmin.ts';
 import {
   requireBuyerSession,
@@ -356,6 +356,7 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
     }
 
     const effectivePairingId = pairingId || process.env.PAIRING_ID || process.env.DEFAULT_PAIRING_ID || process.env.INSTANCE_PAIRING_ID || null;
+    const resolvedOwnerLoId = await getPairingOwnerLoId(effectivePairingId);
 
     const leadRecord: Record<string, any> = {
       leadId: targetLeadId,
@@ -374,6 +375,10 @@ app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Reques
       sourceLabel: 'FTHB House Finder plugin: Chatbot',
       status: 'new'
     };
+
+    if (resolvedOwnerLoId) {
+      leadRecord.ownerLoId = resolvedOwnerLoId;
+    }
 
     await safeFirestoreWrite(db.collection('plugin_leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
     await safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);

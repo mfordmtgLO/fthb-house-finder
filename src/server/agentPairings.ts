@@ -36,6 +36,7 @@ export interface PairingDetails {
   lo: LoanOfficerProfile;
   agent: AgentProfile;
   campaignTag?: string;
+  ownerLoId?: string;
 }
 
 export const MIKE_FORD_LO_PROFILE: LoanOfficerProfile = {
@@ -119,16 +120,39 @@ export async function getPairingDetails(pairingId: string): Promise<PairingDetai
       } catch {}
     }
 
+    const rawOwnerLoId =
+      pairingData.assignedLoId ||
+      pairingData.loId ||
+      pairingData.ownerLoId ||
+      pairingData.assignedLoEmail ||
+      pairingData.loEmail ||
+      (typeof pairingData.lo === 'string' ? pairingData.lo : pairingData.lo?.id || pairingData.lo?.email);
+
+    const resolvedOwnerLoId = (rawOwnerLoId && typeof rawOwnerLoId === 'string' && rawOwnerLoId.trim().length > 0)
+      ? rawOwnerLoId.trim()
+      : undefined;
+
     return {
       id: pairingData.id || pairingId,
       lo,
       agent,
-      campaignTag: pairingData.campaignTag || pairingData.title || ''
+      campaignTag: pairingData.campaignTag || pairingData.title || '',
+      ...(resolvedOwnerLoId ? { ownerLoId: resolvedOwnerLoId } : {})
     };
   } catch (err: any) {
     console.warn('[Firebase Admin] Error resolving pairing details:', pairingId, err.message);
     return null;
   }
+}
+
+/**
+ * Resolves the assigned LO ID (ownerLoId) from a pairing ID.
+ * Returns undefined if unresolvable or if no pairing exists (never invents or defaults).
+ */
+export async function getPairingOwnerLoId(pairingId?: string | null): Promise<string | undefined> {
+  if (!pairingId || typeof pairingId !== 'string') return undefined;
+  const pairing = await getPairingDetails(pairingId);
+  return pairing?.ownerLoId;
 }
 
 /**
