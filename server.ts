@@ -81,7 +81,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+// Support --port CLI argument passed by dev supervisor or environment variable, defaulting strictly to 3000
+const portArgIndex = process.argv.indexOf('--port');
+const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
+const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+// Port 8080 is reserved by the container's Nginx reverse proxy. Dev server must always run on port 3000.
+const PORT = cliPort || (envPort && envPort !== 8080 ? envPort : 3000);
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
 // Server-side dedicated fail-closed API Key

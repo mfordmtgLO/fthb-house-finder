@@ -17,6 +17,7 @@ interface HeaderProps {
   onOpenInstallGuide: () => void;
   onOpenSimulator: () => void;
   onOpenUsdaAdjuster: () => void;
+  onSwitchToDashboard?: () => void;
   isSidebarOpen: boolean;
   setIsSidebarOpen: (open: boolean) => void;
   disclaimerServed: boolean;
@@ -40,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenInstallGuide,
   onOpenSimulator,
   onOpenUsdaAdjuster,
+  onSwitchToDashboard,
   isSidebarOpen,
   setIsSidebarOpen,
   disclaimerServed
@@ -47,19 +49,31 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-lg">
       {/* Top Banner / Attribution */}
-      <div className="bg-gradient-to-r from-cyan-950 via-slate-900 to-indigo-950 px-4 py-1.5 border-b border-cyan-900/30 flex flex-wrap items-center justify-between text-xs text-slate-300">
+      <div className="bg-gradient-to-r from-cyan-950 via-slate-900 to-amber-950 px-4 py-1.5 border-b border-cyan-900/30 flex flex-wrap items-center justify-between text-xs text-slate-300">
         <div className="flex items-center space-x-2">
           <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
           <span className="font-medium text-cyan-200">Mike Ford, NMLS #288455</span>
           <span className="hidden sm:inline text-slate-400">• Curated First-Time Homebuyer Low/No-Down Portal</span>
         </div>
         <div className="flex items-center space-x-3">
+          {onSwitchToDashboard && (
+            <>
+              <button
+                onClick={onSwitchToDashboard}
+                className="text-xs px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1 transition-all"
+                title="Open Loan Officer / ME Dashboard User URL (/dashboard)"
+              >
+                <span>👔 ME Dashboard User</span>
+              </button>
+              <span className="text-slate-500 hidden sm:inline">|</span>
+            </>
+          )}
           <button
             onClick={onOpenUsdaAdjuster}
             className="text-xs text-cyan-300 hover:text-cyan-200 underline font-medium flex items-center gap-1"
             title="Open 2026 USDA & Lakeview AMI Income Adjuster"
           >
-            <span>🌾 USDA Income Adjuster</span>
+            <span>🌾 USDA Adjuster</span>
           </button>
           <span className="text-slate-500 hidden sm:inline">|</span>
           <button
@@ -67,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="text-xs text-amber-300 hover:text-amber-200 underline font-mono flex items-center gap-1"
             title="Simulate 3-way reply from Mike's iPhone"
           >
-            <span>📱 LO Test Simulator</span>
+            <span>📱 LO Simulator</span>
           </button>
           <span className="text-slate-500 hidden sm:inline">|</span>
           <span className="text-slate-400 text-[11px]">Zero-Trust • Equal Housing Lender</span>
