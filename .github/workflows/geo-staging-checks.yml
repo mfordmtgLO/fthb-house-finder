@@ -1,0 +1,38 @@
+name: Geo Staging Code Checks
+on:
+  push:
+    branches:
+      - feature/geo-creation-3d-preview
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # No Firebase service credentials. This job must never reach live data.
+      GEO_FIRESTORE_TARGET: staging
+      GEO_FIRESTORE_PROJECT_ID: astral-web-439103-g7
+      GEO_FIRESTORE_DATABASE_ID: fthb-geo-staging
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript validation
+        run: npm run lint
+      - name: Geo safety unit tests
+        run: npx tsx --test src/server/geoScriptedCommands.test.ts src/server/tcpaConsent.test.ts src/server/firebaseAdmin.test.ts
+      - name: Frontend build
+        run: npm run build
