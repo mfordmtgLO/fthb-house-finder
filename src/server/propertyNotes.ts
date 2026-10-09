@@ -226,25 +226,54 @@ export async function addPropertyNote(params: {
 /**
  * Adds a 3-way LO response to a property thread
  */
-export async function addMikePropertyReply(propertyId: string, leadId: string, replyText: string): Promise<PropertyNoteMessage> {
-  const loadedThread = await getOrCreatePropertyThread(propertyId, leadId);
-  const thread: PropertyThread = { ...loadedThread, messages: [...loadedThread.messages] };
-  const cleanText = sanitizePiiInput(replyText);
-
-  const replyMsg: PropertyNoteMessage = {
-    id: `reply-${Date.now()}-mike`,
-    sender: 'lo',
-    authorName: thread.loProfile?.name || 'Loan Officer',
-    text: cleanText,
-    timestamp: new Date().toISOString(),
-    isQuestion: false
-  };
-
-  thread.messages.push(replyMsg);
-  thread.updatedAt = new Date().toISOString();
+/**
+ * Buyer-initiated, in-app-only reply permission.
+ * No LO, admin or agent can create the first property card note.
+ * This permission NEVER grants TCPA/SMS authorization.
+ *
+ * The guard runs in a Firestore transaction against persisted history,
+ * not a browser flag or in-memory thread cache.
+ */
+export async function addMikePropertyReply(
+  propertyId: string,
+  leadId: string,
+  replyText: string,
+  staffEmail: string
+): Promise<PropertyNoteMessage> {
   const db = getAdminFirestore();
   if (!db) throw new Error('PROPERTY_NOTES_STORAGE_UNAVAILABLE');
-  await db.collection('property_threads').doc(thread.threadId).set(thread, { merge: true });
-  threadCache.set(thread.threadId, thread);
-  return replyMsg;
+  if (!propertyId || !leadId || typeof replyText !== 'string' || !replyText.trim() ||
+      replyText.length > 500 || !staffEmail) throw new Error('INVALID_PROPERTY_REPLY');
+
+  const session = await getBuyerSession(leadId);
+  const pairing = session?.pairing?.id ? await getPairingDetails(session.pairing.id) : null;
+  if (!pairing?.lo?.email || pairing.lo.email.trim().toLowerCase() !== staffEmail.trim().toLowerCase()) {
+    throw new Error('PROPERTY_NOTE_ASSIGNED_LO_ONLY');
+  }
+
+  const threadRef = db.collection('property_threads').doc(`${propertyId}_${leadId}`);
+  const cleanText = sanitizePiiInput(replyText.trim());
+  return db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(threadRef);
+    if (!snapshot.exists) throw new Error('PROPERTY_NOTE_BUYER_MUST_INITIATE');
+    const thread = snapshot.data() as PropertyThread;
+    if (thread.propertyId !== propertyId || thread.leadId !== leadId ||
+        !Array.isArray(thread.messages) ||
+        !thread.messages.some(m => m.sender === 'buyer' && typeof m.text === 'string' && m.text.trim().length > 0)) {
+      throw new Error('PROPERTY_NOTE_BUYER_MUST_INITIATE');
+    }
+    const replyMsg: PropertyNoteMessage = {
+      id: `reply-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      sender: 'lo',
+      authorName: pairing.lo.name,
+      text: cleanText,
+      timestamp: new Date().toISOString(),
+      isQuestion: false
+    };
+    transaction.update(threadRef, {
+      messages: [...thread.messages, replyMsg],
+      updatedAt: replyMsg.timestamp
+    });
+    return replyMsg;
+  });
 }
