@@ -55,10 +55,15 @@ export function clearPropertyNotesMemoryCache(): void {
 export async function getOrCreatePropertyThread(propertyId: string, leadId: string): Promise<PropertyThread> {
   const threadId = `${propertyId}_${leadId}`;
   
+  // Resolve pairing for every read, including legacy threads and cached records.
+  const session = await getBuyerSession(leadId);
+  const verifiedPairing = session?.pairing?.id ? await getPairingDetails(session.pairing.id) : null;
+  const withVerifiedTeam = (thread: PropertyThread): PropertyThread => ({
+    ...thread, loProfile: verifiedPairing?.lo || null,
+    agentProfile: verifiedPairing?.agent || null
+  });
   // 1. Check in-memory cache
-  if (threadCache.has(threadId)) {
-    return threadCache.get(threadId)!;
-  }
+  if (threadCache.has(threadId)) return withVerifiedTeam(threadCache.get(threadId)!);
 
   const db = getAdminFirestore();
 
@@ -68,8 +73,9 @@ export async function getOrCreatePropertyThread(propertyId: string, leadId: stri
       const docSnap = await db.collection('property_threads').doc(threadId).get();
       if (docSnap.exists) {
         const data = docSnap.data() as PropertyThread;
-        threadCache.set(threadId, data);
-        return data;
+        const verified = withVerifiedTeam(data);
+        threadCache.set(threadId, verified);
+        return verified;
       }
     } catch (err: any) {
       console.warn('[Property Thread Firestore Read Warning]', err.message);
@@ -77,8 +83,6 @@ export async function getOrCreatePropertyThread(propertyId: string, leadId: stri
   }
 
   // 3. Initialize new thread; never assume the buyer belongs to Mike Ford.
-  const session = await getBuyerSession(leadId);
-  const verifiedPairing = session?.pairing?.id ? await getPairingDetails(session.pairing.id) : null;
   const listings = await queryCuratedListings({ listingId: propertyId });
   const listing = listings[0];
   const propertyAddress = listing ? `${listing.address}, ${listing.city}` : 'Curated Home';
@@ -102,7 +106,7 @@ export async function getOrCreatePropertyThread(propertyId: string, leadId: stri
     if (err.code !== 6 && err.code !== 'already-exists') throw err;
     const existing = await db.collection('property_threads').doc(threadId).get();
     if (!existing.exists) throw err;
-    threadCache.set(threadId, existing.data() as PropertyThread);
+    threadCache.set(threadId, withVerifiedTeam(existing.data() as PropertyThread));
   });
   if (threadCache.has(threadId)) return threadCache.get(threadId)!;
   threadCache.set(threadId, newThread);
@@ -142,7 +146,8 @@ export async function addPropertyNote(params: {
   tcpaAccepted?: boolean;
 }): Promise<{ note: PropertyNoteMessage; aiReply?: PropertyNoteMessage | null }> {
   const { propertyId, leadId, authorName, text, ipAddress } = params;
-  const thread = await getOrCreatePropertyThread(propertyId, leadId);
+  const loadedThread = await getOrCreatePropertyThread(propertyId, leadId);
+  const thread: PropertyThread = { ...loadedThread, messages: [...loadedThread.messages] };
   // Zero-trust PII sanitization + 500 char defensive length cap
   const cleanText = sanitizePiiInput(text).substring(0, 500);
 
@@ -222,7 +227,8 @@ export async function addPropertyNote(params: {
  * Adds a 3-way LO response to a property thread
  */
 export async function addMikePropertyReply(propertyId: string, leadId: string, replyText: string): Promise<PropertyNoteMessage> {
-  const thread = await getOrCreatePropertyThread(propertyId, leadId);
+  const loadedThread = await getOrCreatePropertyThread(propertyId, leadId);
+  const thread: PropertyThread = { ...loadedThread, messages: [...loadedThread.messages] };
   const cleanText = sanitizePiiInput(replyText);
 
   const replyMsg: PropertyNoteMessage = {
