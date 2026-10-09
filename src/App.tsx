@@ -23,6 +23,7 @@ import { PwaInstallGuideModal } from './components/PwaInstallGuideModal';
 import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
 import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
 import { IdentifyModal } from './components/IdentifyModal';
+import { GamifiedBuyerJourney } from './components/GamifiedBuyerJourney';
 import LeadIntakeChatbot from './components/LeadIntakeChatbot';
 import {
   Home,
@@ -82,6 +83,7 @@ export default function App() {
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [isUsdaAdjusterOpen, setIsUsdaAdjusterOpen] = useState<boolean>(false);
   const [isIdentifyOpen, setIsIdentifyOpen] = useState<boolean>(false);
+  const [isIntakeChatOpen, setIsIntakeChatOpen] = useState<boolean>(false);
 
   // Deep-linking map state
   const [deepLinkedListingId, setDeepLinkedListingId] = useState<string | null>(null);
@@ -320,6 +322,17 @@ export default function App() {
           />
 
           <div className="max-w-7xl mx-auto px-4 py-4 space-y-6">
+            {/* Gamified Readiness Journey */}
+            <GamifiedBuyerJourney
+              favoritesCount={favorites.length}
+              hasCurations={Boolean(curationsData?.hasCurations && curationsData.listings?.length > 0)}
+              isChatOpen={isSidebarOpen}
+              onOpenChat={() => setIsSidebarOpen(true)}
+              onOpenIntake={() => setIsIntakeChatOpen(true)}
+              onOpenBuydown={() => setBuydownListing(listings[0] || null)}
+              onOpenSchedule={() => setPreApprovalListing(listings[0] || null)}
+            />
+
             {/* View Switch: List vs Map */}
             {activeView === 'map' ? (
               <ListingMap
@@ -713,6 +726,8 @@ export default function App() {
         leadId={leadId}
         pairing={pairing}
         isSidebarOpen={isSidebarOpen}
+        isOpenControlled={isIntakeChatOpen}
+        onOpenChange={setIsIntakeChatOpen}
         onSaveLead={() => {
           loadBuyerCurations(leadId);
         }}

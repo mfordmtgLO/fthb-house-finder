@@ -33,6 +33,8 @@ interface LeadIntakeChatbotProps {
   leadId: string;
   pairing?: any | null;
   isSidebarOpen?: boolean;
+  isOpenControlled?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onSaveLead?: (leadData: any) => void;
   onExploreListings?: () => void;
 }
@@ -66,10 +68,17 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
   leadId,
   pairing,
   isSidebarOpen,
+  isOpenControlled,
+  onOpenChange,
   onSaveLead,
   onExploreListings
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isOpen = isOpenControlled !== undefined ? isOpenControlled : internalIsOpen;
+  const setIsOpen = (val: boolean) => {
+    setInternalIsOpen(val);
+    if (onOpenChange) onOpenChange(val);
+  };
   const [isMaximized, setIsMaximized] = useState(false);
   const [showAttentionBadge, setShowAttentionBadge] = useState(true);
   const [currentStep, setCurrentStep] = useState(1); // 1 to 8, then 9 (blueprint)
