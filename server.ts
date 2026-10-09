@@ -909,7 +909,24 @@ app.post('/api/mike/reply', requireStaffRole('master_admin', 'admin', 'loan_offi
 
   let resultMsg: any;
   if (propertyId) {
-    resultMsg = await addMikePropertyReply(propertyId, leadId, text);
+    try {
+      resultMsg = await addMikePropertyReply(propertyId, leadId, text, staff.email);
+    } catch (err: any) {
+      const code = String(err?.message || '');
+      if (code === 'PROPERTY_NOTE_BUYER_MUST_INITIATE' ||
+          code === 'PROPERTY_NOTE_ASSIGNED_LO_ONLY') {
+        await recordStaffAudit({
+          actor: staff.email, role: staff.role, action: 'STAFF_REPLY',
+          targetLeadId: leadId, outcome: 'DENIED',
+          metadata: { propertyId, reason: code }
+        });
+        res.status(403).json({ code, error: code === 'PROPERTY_NOTE_BUYER_MUST_INITIATE'
+          ? 'The buyer must post the first property card note before the assigned loan officer can reply.'
+          : 'Only the verified assigned loan officer may reply to this property card.' });
+        return;
+      }
+      throw err;
+    }
   } else {
     resultMsg = await handleMikeReply(leadId, text);
   }
