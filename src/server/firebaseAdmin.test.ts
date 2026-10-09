@@ -43,3 +43,29 @@ test('production retains existing named database', () => {
   assert.equal(resolveFirestoreTarget({ GEO_FIRESTORE_TARGET: 'production' }).databaseId,
     'ai-studio-vantageaiworkspa-320759cc-ded2-4188-b4e0-ed887f4ad5bd');
 });
+
+test('fail-closed: wrong staging target never initializes Firestore', async () => {
+  const { getAdminFirestore } = await import('./firebaseAdmin.ts');
+  const keys = ['GEO_FIRESTORE_TARGET', 'GEO_FIRESTORE_PROJECT_ID', 'GEO_FIRESTORE_DATABASE_ID', 'GEO_STAGING_USE_ADC'];
+  const old = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+  try {
+    process.env.GEO_FIRESTORE_TARGET = 'staging';
+    process.env.GEO_FIRESTORE_PROJECT_ID = 'astral-web-439103-g7';
+    process.env.GEO_FIRESTORE_DATABASE_ID = '(default)';
+    process.env.GEO_STAGING_USE_ADC = 'true';
+    assert.equal(getAdminFirestore(), null);
+    const { canTextLead, recordIntakeTcpaConsent, revokeTcpaConsent } = await import('./tcpaConsent.ts');
+    assert.equal(await canTextLead('synthetic-failclosed-01'), false);
+    await assert.rejects(recordIntakeTcpaConsent({
+      leadId: 'synthetic-failclosed-01', rawPhone: '503-555-0147', explicitlyChecked: true
+    }), /TCPA_STORAGE_UNAVAILABLE/);
+    await assert.rejects(revokeTcpaConsent({
+      leadId: 'synthetic-failclosed-01', reason: 'STOP'
+    }), /TCPA_STORAGE_UNAVAILABLE/);
+  } finally {
+    for (const k of keys) {
+      if (old[k] === undefined) delete process.env[k];
+      else process.env[k] = old[k];
+    }
+  }
+});
