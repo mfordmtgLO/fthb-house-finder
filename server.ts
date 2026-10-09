@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
 import { getPairingDetails } from './src/server/agentPairings.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './src/server/firebaseAdmin.ts';
+import { recordIntakeTcpaConsent, validateAndFormatE164 } from './src/server/tcpaConsent.ts';
 import {
   requireBuyerSession,
   requireStaffRole,
@@ -297,63 +298,92 @@ app.get('/api/plugin/status', async (_req: Request, res: Response): Promise<void
   });
 });
 
-// 1c-2. Plugin Intake Lead Submission Endpoint
+// 1c-2. Buyer intake: the checkbox is optional, and a submitted boolean is
+// NEVER treated as durable TCPA consent. The transactional consent ledger
+// alone authorizes consent-dependent actions. SMS transport remains dormant.
 app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
-  const { leadId, name, email, phone, intakeAnswers, smsConsentAuthorized, smsConsentTimestamp, pairingId, campaignTag } = req.body;
-  if (!name || !email || !phone) {
-    res.status(400).json({ error: 'Name, email, and phone required' });
+  const ip = getClientIp(req);
+  if (!rateLimitLeads(ip).allowed) {
+    res.status(429).json({ code: 'INTAKE_RATE_LIMITED', error: 'Please try again later.' });
     return;
   }
-
-  const safeName = sanitizePiiInput(name);
-  const normalizedEmail = email.toLowerCase().trim();
-  const safePhone = sanitizePiiInput(phone);
+  const { leadId, name, email, phone, intakeAnswers, smsConsentAuthorized, pairingId, campaignTag } = req.body || {};
+  if (typeof name !== 'string' || !name.trim() || name.length > 120 ||
+      typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 ||
+      typeof phone !== 'string' || !validateAndFormatE164(phone) ||
+      (leadId !== undefined && (typeof leadId !== 'string' || !/^[a-zA-Z0-9_-]{6,120}$/.test(leadId)))) {
+    res.status(400).json({ code: 'INVALID_INTAKE', error: 'Valid name, email, phone and lead ID required.' });
+    return;
+  }
+  if (smsConsentAuthorized !== undefined && typeof smsConsentAuthorized !== 'boolean') {
+    res.status(400).json({ code: 'INVALID_CONSENT_FLAG', error: 'Invalid consent selection.' });
+    return;
+  }
 
   const db = getAdminFirestore();
   if (!db) {
-    res.status(503).json({ error: 'Firestore service unavailable', code: 'FIRESTORE_UNAVAILABLE' });
+    res.status(503).json({ code: 'FIRESTORE_UNAVAILABLE', error: 'Intake storage unavailable.' });
     return;
   }
 
+  // For consent, never silently substitute the site owner for an absent LO.
+  // An explicit verified pairing is required before the checkbox can be used.
+  const pairing = typeof pairingId === 'string' && pairingId.length > 0
+    ? await getPairingDetails(pairingId) : null;
+  if (smsConsentAuthorized === true && !pairing) {
+    res.status(409).json({ code: 'VERIFIED_PAIRING_REQUIRED',
+      error: 'Text-message consent is unavailable until a verified loan officer is assigned. Uncheck SMS consent to continue.' });
+    return;
+  }
+
+  const targetLeadId = leadId || `lead-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const safeName = sanitizePiiInput(name.trim());
+  const normalizedEmail = email.toLowerCase().trim();
+  const safePhone = validateAndFormatE164(phone)!;
+  const leadRecord = {
+    leadId: targetLeadId, name: safeName, email: normalizedEmail, phone: safePhone,
+    intakeAnswers: intakeAnswers && typeof intakeAnswers === 'object' && !Array.isArray(intakeAnswers)
+      ? intakeAnswers : {},
+    // Never persist the browser's unverified consent assertion as a grant.
+    smsConsentAuthorized: false,
+    smsConsentTimestamp: null,
+    pairingId: pairing?.id || null,
+    assignedLoNmlsId: pairing?.lo.nmlsId || null,
+    campaignTag: typeof campaignTag === 'string' ? campaignTag.slice(0, 100) : '',
+    createdAt: new Date().toISOString(), source: 'plugin-chatbot'
+  };
+
   try {
-    const targetLeadId = leadId || `lead-${Date.now()}`;
-    const leadRecord = {
-      leadId: targetLeadId,
-      name: safeName,
-      email: normalizedEmail,
-      phone: safePhone,
-      intakeAnswers: intakeAnswers || {},
-      smsConsentAuthorized: Boolean(smsConsentAuthorized),
-      smsConsentTimestamp: smsConsentAuthorized ? (smsConsentTimestamp || new Date().toISOString()) : null,
-      pairingId: pairingId || null,
-      campaignTag: campaignTag || '',
-      createdAt: new Date().toISOString(),
-      source: 'plugin-chatbot'
-    };
+    // Await durable writes. A failed write must never return intake success.
+    const batch = db.batch();
+    batch.set(db.collection('plugin_leads').doc(targetLeadId), leadRecord, { merge: true });
+    batch.set(db.collection('leads').doc(targetLeadId), leadRecord, { merge: true });
+    await batch.commit();
 
-    await safeFirestoreWrite(db.collection('plugin_leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
-    await safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
-
-    if (intakeAnswers?.sampleHomesWanted && intakeAnswers?.location) {
-      await safeFirestoreWrite(db.collection('lead_curations').doc(targetLeadId).set({
-        leadId: targetLeadId,
-        status: 'requested',
-        city: intakeAnswers.location,
-        requestedAt: new Date().toISOString()
-      }, { merge: true }), 2000);
+    if (smsConsentAuthorized === true) {
+      // Server timestamp/version/IP and grant audit are produced by the
+      // verified consent service, not trusted from client-supplied timestamps.
+      await recordIntakeTcpaConsent({
+        leadId: targetLeadId, rawPhone: safePhone,
+        explicitlyChecked: true, ipAddress: ip
+      });
     }
 
+    // Lead intake is independent of optional SMS consent.
     recordAuditLedger({
-      leadId: targetLeadId,
-      actionType: 'PLUGIN_INTAKE_SUBMITTED',
-      ipAddress: getClientIp(req),
-      redactedPayload: { name: safeName, email: normalizedEmail, smsConsent: Boolean(smsConsentAuthorized) }
+      leadId: targetLeadId, actionType: 'PLUGIN_INTAKE_SUBMITTED',
+      ipAddress: ip, redactedPayload: { smsConsentRequested: smsConsentAuthorized === true }
     });
-
-    res.json({ success: true, leadId: targetLeadId });
+    res.json({
+      success: true, leadId: targetLeadId,
+      smsConsentRecorded: smsConsentAuthorized === true
+    });
   } catch (err: any) {
-    console.error('[Plugin Intake Error]', err.message);
-    res.status(500).json({ error: 'Intake submission failed' });
+    console.error('[Plugin Intake Error]', err?.message);
+    res.status(503).json({
+      code: 'INTAKE_PERSISTENCE_UNCONFIRMED',
+      error: 'Your submission could not be confirmed. Please try again or contact your assigned loan officer.'
+    });
   }
 });
 
