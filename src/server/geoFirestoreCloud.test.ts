@@ -7,6 +7,9 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { getAdminFirestore } from './firebaseAdmin.ts';
 import { recordIntakeTcpaConsent, revokeTcpaConsent, canTextLead, sendSmsToLead } from './tcpaConsent.ts';
 
@@ -20,6 +23,18 @@ test('real Geo TCPA lifecycle on isolated cloud staging', { timeout: 90000 }, as
     'geo-staging-validator@astral-web-439103-g7.iam.gserviceaccount.com');
   assert.equal(process.env.FIREBASE_SERVICE_ACCOUNT_JSON, undefined);
   assert.equal(process.env.FIRESTORE_EMULATOR_HOST, undefined);
+
+  // Refuse to run with personal-user ADC or a long-lived private key.
+  // The impersonated ADC file contains a source credential but no service
+  // account private key; never print or commit this file.
+  const adcPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    path.join(os.homedir(), '.config/gcloud/application_default_credentials.json');
+  const adc = JSON.parse(fs.readFileSync(adcPath, 'utf8'));
+  assert.equal(adc.type, 'impersonated_service_account',
+    'ADC must impersonate Geo Staging Validator, not use personal credentials');
+  assert.ok(String(adc.service_account_impersonation_url || '').includes(
+    '/serviceAccounts/geo-staging-validator@astral-web-439103-g7.iam.gserviceaccount.com:generateAccessToken'),
+    'ADC impersonation target must be Geo Staging Validator');
 
   const db = getAdminFirestore();
   assert.ok(db, 'Staging Firestore must initialize; never fall back to production');
