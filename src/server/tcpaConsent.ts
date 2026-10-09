@@ -13,9 +13,9 @@
 import crypto from 'node:crypto';
 import { getAdminFirestore } from './firebaseAdmin.ts';
 
-export const TCPA_CONSENT_VERSION = '2026.1-intake-v1';
+export const TCPA_CONSENT_VERSION = '2026.2-assigned-lo-intake-v1';
 export const TCPA_DISCLOSURE_TEXT =
-  'By providing your phone number, you agree to receive text messages from Mike Ford and paired agents about properties and your homebuying journey. Message and data rates may apply. Reply STOP to opt out at any time. Consent is not a condition of purchase.';
+  'Optional: I agree to receive text messages from my verified assigned loan officer and paired agent about properties and my homebuying journey. Message and data rates may apply. Reply STOP to opt out at any time. Consent is not a condition of purchase.';
 
 export interface TcpaConsentRecord {
   leadId: string;
