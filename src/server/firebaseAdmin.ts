@@ -11,7 +11,7 @@
  *    credentials or the plugin's own project.
  */
 
-import { initializeApp, getApps, cert, type App } from 'firebase-admin/app';
+import { initializeApp, getApps, cert, applicationDefault, type App } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
 const PRODUCTION_DATABASE_ID = 'ai-studio-vantageaiworkspa-320759cc-ded2-4188-b4e0-ed887f4ad5bd';
@@ -78,6 +78,35 @@ export function getAdminFirestore(): Firestore | null {
       return firestoreDb;
     } catch (err: any) {
       console.error('[Firebase Admin] Emulator initialization refused:', err.message);
+      return null;
+    }
+  }
+  // Keyless cloud validation is explicitly opt-in, staging-only, and bound to
+  // the fixed project and named database above. The caller must authenticate
+  // ADC by impersonating the restricted Geo Staging Validator service account.
+  // IAM (not this flag) enforces the actual database access boundary.
+  if (process.env.GEO_STAGING_USE_ADC === 'true') {
+    try {
+      if (target.target !== 'staging' ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+          process.env.GEO_FIRESTORE_PROJECT_ID !== STAGING_PROJECT_ID ||
+          process.env.GEO_FIRESTORE_DATABASE_ID !== STAGING_DATABASE_ID ||
+          process.env.GOOGLE_CLOUD_PROJECT !== STAGING_PROJECT_ID ||
+          process.env.GEO_STAGING_VALIDATOR_EMAIL !==
+            'geo-staging-validator@astral-web-439103-g7.iam.gserviceaccount.com') {
+        throw new Error('STAGING_ADC_CONFIGURATION_REJECTED');
+      }
+      const existing = getApps().find(a => a.name === APP_NAME);
+      if (existing) throw new Error('STAGING_ADC_APP_ALREADY_INITIALIZED');
+      adminApp = initializeApp({
+        credential: applicationDefault(),
+        projectId: STAGING_PROJECT_ID
+      }, APP_NAME);
+      firestoreDb = getFirestore(adminApp, STAGING_DATABASE_ID);
+      firestoreDb.settings({ ignoreUndefinedProperties: true });
+      return firestoreDb;
+    } catch (err: any) {
+      console.error('[Firebase Admin] Staging ADC refused:', err.message);
       return null;
     }
   }
