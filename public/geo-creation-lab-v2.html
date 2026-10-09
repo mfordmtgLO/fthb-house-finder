@@ -1,0 +1,388 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved. -->
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#07111f"/>
+<title>Geo — Reference-Inspired 3D Character Lab V2</title>
+<style>
+:root{--bg:#07111f;--panel:rgba(10,23,40,.86);--line:rgba(125,211,252,.18);--text:#e7f7ff;--muted:#8ca8ba}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:radial-gradient(circle at 50% 10%,#163653 0,#07111f 52%,#030812 100%);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);overflow:hidden}
+#app{position:fixed;inset:0}#stage{position:absolute;inset:0}
+canvas{display:block;width:100%;height:100%}
+.hud{position:absolute;inset:0;pointer-events:none}
+.top{position:absolute;left:16px;right:16px;top:14px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.brand{pointer-events:auto;padding:12px 14px;border:1px solid var(--line);background:var(--panel);backdrop-filter:blur(16px);border-radius:16px;box-shadow:0 16px 40px #0007}
+.brand strong{font-size:18px;letter-spacing:-.02em}.brand span{display:block;font-size:11px;color:#9fdfff;margin-top:2px}
+.status{pointer-events:auto;padding:10px 13px;border:1px solid var(--line);background:var(--panel);backdrop-filter:blur(16px);border-radius:14px;font-size:11px;text-transform:uppercase;letter-spacing:.12em}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;box-shadow:0 0 16px currentColor}
+.bottom{position:absolute;left:16px;right:16px;bottom:max(16px,env(safe-area-inset-bottom));display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.controls,.muse{pointer-events:auto;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);border-radius:18px;box-shadow:0 18px 50px #0008}
+.controls{padding:10px;display:flex;flex-wrap:wrap;gap:7px;max-width:760px}
+button{border:1px solid rgba(125,211,252,.18);background:#102338;color:#dff7ff;padding:9px 11px;border-radius:11px;font-weight:700;font-size:11px;cursor:pointer;transition:.18s transform,.18s background}
+button:hover{background:#173552;transform:translateY(-1px)}button.active{background:#0e7490;border-color:#67e8f9;box-shadow:0 0 18px #22d3ee33}
+.muse{width:min(330px,42vw);padding:13px}.muse h3{margin:0 0 8px;font-size:12px;color:#dffaff}.bubble{background:#0c1d30;border:1px solid rgba(167,139,250,.25);padding:10px 11px;border-radius:13px;font-size:12px;line-height:1.4;color:#cfe5f2}.typing{color:#b69cff}.hint{margin-top:8px;color:#7592a5;font-size:10px}
+.legend{position:absolute;left:16px;bottom:112px;padding:9px 11px;border-radius:13px;background:rgba(4,13,24,.65);border:1px solid rgba(125,211,252,.12);font-size:10px;color:#91adbd;backdrop-filter:blur(10px)}
+@media(max-width:760px){.top{top:10px;left:10px;right:10px}.brand{padding:9px 11px}.brand strong{font-size:15px}.status{padding:8px 10px}.bottom{left:10px;right:10px;display:block}.controls{max-width:none;margin-bottom:8px}.muse{width:100%}.legend{left:10px;bottom:180px}.controls button{flex:1 0 auto}}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="stage"></div>
+<div class="hud">
+  <div class="top">
+    <div class="brand"><strong>Geo</strong><span>Your Home Quest Companion · 3D Creation Lab</span></div>
+    <div class="status"><span id="statusDot" class="dot" style="color:#20e0c2;background:#20e0c2"></span><span id="statusText">READY · IDLE</span></div>
+  </div>
+  <div class="legend">Reference-inspired procedural 3D V2 · interactive expressions, pin states, heart & celebrations</div>
+  <div class="bottom">
+    <div class="controls" id="controls">
+      <button data-state="idle" class="active">Idle</button>
+      <button data-state="thinking">Muse Thinking</button>
+      <button data-state="favorite">Favorite</button>
+      <button data-state="pricedrop">Price Drop</button>
+      <button data-state="newhome">New Home</button>
+      <button data-state="point">Point / Guide</button>
+      <button data-state="drive">Commute Ride</button>
+      <button data-state="saturday">Saturday Tour · 4 Homes</button>
+      <button data-state="arrive">Arrive</button>
+      <button data-state="top3">Top 3</button>
+      <button data-state="celebrate">Celebrate</button>
+    </div>
+    <div class="muse">
+      <h3>✦ Muse conversation</h3>
+      <div id="bubble" class="bubble">“Hey! I found a home worth exploring. Want to take a look?”</div>
+      <div class="hint">Geo reacts visually; Muse remains the conversational intelligence layer.</div>
+    </div>
+  </div>
+</div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07111f);
+scene.fog = new THREE.Fog(0x07111f, 13, 32);
+
+const camera = new THREE.PerspectiveCamera(34, innerWidth/innerHeight, .1, 100);
+camera.position.set(0,2.25,8.8);
+camera.lookAt(0,1.25,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.15;
+document.getElementById('stage').appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x9fe8ff,0x09101a,2.2));
+const key=new THREE.DirectionalLight(0xffffff,3.5); key.position.set(-4,8,6); key.castShadow=true; scene.add(key);
+const rim=new THREE.PointLight(0x4ddcff,10,18); rim.position.set(4,3,2); scene.add(rim);
+
+const ground=new THREE.Mesh(new THREE.CircleGeometry(18,64),new THREE.MeshStandardMaterial({color:0x0a1c2c,roughness:.88,metalness:.05}));
+ground.rotation.x=-Math.PI/2;ground.position.y=-1.05;ground.receiveShadow=true;scene.add(ground);
+
+const roadMat=new THREE.MeshStandardMaterial({color:0x172d40,roughness:.9});
+const road=new THREE.Mesh(new THREE.PlaneGeometry(15,3.1),roadMat);road.rotation.x=-Math.PI/2;road.position.y=-1.03;road.position.z=-1.1;scene.add(road);
+for(let x=-6.5;x<7;x+=1.6){const dash=new THREE.Mesh(new THREE.PlaneGeometry(.8,.08),new THREE.MeshBasicMaterial({color:0xf9d66b}));dash.rotation.x=-Math.PI/2;dash.position.set(x,-1.0,-1.1);scene.add(dash)}
+
+function mat(color,rough=.55,metal=.05,emissive=0x000000,intensity=0){return new THREE.MeshStandardMaterial({color,roughness:rough,metalness:metal,emissive,emissiveIntensity:intensity})}
+const teal=mat(0x20cdb9,.42,.08), tealDark=mat(0x118f8d,.5,.06), yellow=mat(0xffd45c,.35,.05), coral=mat(0xff826b,.45,.03), white=mat(0xf5fbff,.25,.02), black=mat(0x061018,.3,.02), orange=mat(0xff9f43,.4,.04);
+const pinMat=mat(0x20e0c2,.24,.05,0x20e0c2,1.8);
+
+const geo=new THREE.Group();geo.position.y=.15;scene.add(geo);
+const body=new THREE.Mesh(new THREE.CapsuleGeometry(.83,.92,8,20),teal);body.position.y=.45;body.scale.set(1,.95,.82);body.castShadow=true;geo.add(body);
+const belly=new THREE.Mesh(new THREE.SphereGeometry(.48,24,16),mat(0x68ead8,.6,.02));belly.scale.set(1,.62,.32);belly.position.set(0,.37,.67);geo.add(belly);
+const head=new THREE.Mesh(new THREE.SphereGeometry(1.18,32,24),teal);head.position.y=1.82;head.scale.set(1.02,.98,.86);head.castShadow=true;geo.add(head);
+
+function limb(x,y,z,sx,sy,sz,material=teal){const m=new THREE.Mesh(new THREE.CapsuleGeometry(.14,.58,6,12),material);m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.castShadow=true;geo.add(m);return m}
+const armL=limb(-.92,.55,.05,.85,.9,.9),armR=limb(.92,.55,.05,.85,.9,.9);
+const legL=limb(-.34,-.55,.04,1,1.05,1),legR=limb(.34,-.55,.04,1,1.05,1);
+
+const eyeL=new THREE.Mesh(new THREE.SphereGeometry(.29,24,18),white),eyeR=eyeL.clone();
+eyeL.position.set(-.39,1.94,.82);eyeR.position.set(.39,1.94,.82);eyeL.scale.set(1,.98,.55);eyeR.scale.copy(eyeL.scale);geo.add(eyeL,eyeR);
+const pupilL=new THREE.Mesh(new THREE.SphereGeometry(.12,20,16),black),pupilR=pupilL.clone();
+pupilL.position.set(-.39,1.95,1.04);pupilR.position.set(.39,1.95,1.04);geo.add(pupilL,pupilR);
+
+const mouth=new THREE.Mesh(new THREE.TorusGeometry(.19,.045,8,24,Math.PI),coral);mouth.rotation.x=Math.PI;mouth.position.set(0,1.53,.86);geo.add(mouth);
+const cheekL=new THREE.Mesh(new THREE.SphereGeometry(.1,16,12),coral),cheekR=cheekL.clone();cheekL.position.set(-.73,1.63,.82);cheekR.position.set(.73,1.63,.82);cheekL.scale.set(1,.6,.4);cheekR.scale.copy(cheekL.scale);geo.add(cheekL,cheekR);
+
+const pin=new THREE.Group();pin.position.set(0,3.03,.02);geo.add(pin);
+const pinBody=new THREE.Mesh(new THREE.SphereGeometry(.28,24,16),pinMat);pinBody.scale.set(1,.82,.45);pin.add(pinBody);
+const pinTip=new THREE.Mesh(new THREE.ConeGeometry(.24,.52,24),pinMat);pinTip.rotation.z=Math.PI;pinTip.position.y=-.35;pin.add(pinTip);
+const pinLight=new THREE.PointLight(0x20e0c2,3.5,2.8);pinLight.position.z=.1;pin.add(pinLight);
+
+const satchel=new THREE.Mesh(new THREE.BoxGeometry(.52,.48,.2),orange);satchel.position.set(-.67,.67,.52);satchel.rotation.z=-.25;satchel.castShadow=true;geo.add(satchel);
+const strap=new THREE.Mesh(new THREE.TorusGeometry(.48,.035,8,32,Math.PI),yellow);strap.rotation.x=Math.PI/2;strap.rotation.z=-.2;strap.position.set(-.23,.82,.48);geo.add(strap);
+const badge=new THREE.Mesh(new THREE.CylinderGeometry(.11,.11,.035,24),yellow);badge.rotation.x=Math.PI/2;badge.position.set(-.67,.67,.64);geo.add(badge);
+
+const tailCurve=new THREE.CatmullRomCurve3([new THREE.Vector3(.65,.3,-.05),new THREE.Vector3(1.25,.15,-.1),new THREE.Vector3(1.55,.45,-.15),new THREE.Vector3(1.25,.8,-.15)]);
+const tail=new THREE.Mesh(new THREE.TubeGeometry(tailCurve,24,.055,8,false),yellow);tail.castShadow=true;geo.add(tail);
+const compass=new THREE.Mesh(new THREE.CylinderGeometry(.14,.14,.06,16),yellow);compass.rotation.x=Math.PI/2;compass.position.set(.35,.85,.54);geo.add(compass);
+
+const car=new THREE.Group();car.visible=false;scene.add(car);
+const carBody=new THREE.Mesh(new THREE.BoxGeometry(1.8,.48,1.05),coral);carBody.position.y=-.42;carBody.castShadow=true;car.add(carBody);
+const roof=new THREE.Mesh(new THREE.BoxGeometry(.95,.38,.9),tealDark);roof.position.set(.12,-.1,0);car.add(roof);
+for(const x of [-.65,.65])for(const z of [-.57,.57]){const w=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,.12,20),black);w.rotation.x=Math.PI/2;w.position.set(x,-.65,z);car.add(w)}
+const carGeo=new THREE.Group();carGeo.position.set(0,.05,0);car.add(carGeo);carGeo.scale.set(.5,.5,.5);
+// Keep the hero Geo in the scene graph. The car is a separate vehicle layer so Geo never disappears when the car is hidden.
+
+const routePts=[new THREE.Vector3(-5,-.88,-1.1),new THREE.Vector3(-3,-.88,-1.1),new THREE.Vector3(-1,-.88,-.2),new THREE.Vector3(1,-.88,-.2),new THREE.Vector3(3,-.88,-1.1),new THREE.Vector3(5,-.88,-1.1)];
+const routeCurve=new THREE.CatmullRomCurve3(routePts);
+const routeTube=new THREE.Mesh(new THREE.TubeGeometry(routeCurve,80,.025,6,false),new THREE.MeshBasicMaterial({color:0x55dfff,transparent:true,opacity:.75}));
+routeTube.visible=false;scene.add(routeTube);
+
+// Four curated-home stops for the Saturday open-house quest.
+const homeStops = [
+  {t:.12, label:'HOME 1', color:0xffd45c},
+  {t:.36, label:'HOME 2', color:0x55dfff},
+  {t:.61, label:'HOME 3', color:0xff826b},
+  {t:.84, label:'HOME 4', color:0x55e39a}
+];
+const stopGroup=new THREE.Group(); scene.add(stopGroup);
+homeStops.forEach((stop,i)=>{
+  const p=routeCurve.getPointAt(stop.t);
+  const marker=new THREE.Mesh(
+    new THREE.CylinderGeometry(.16,.16,.06,24),
+    new THREE.MeshBasicMaterial({color:stop.color,transparent:true,opacity:.92})
+  );
+  marker.position.set(p.x,-.86,p.z);
+  marker.userData.stop=i;
+  stopGroup.add(marker);
+  const ring=new THREE.Mesh(
+    new THREE.RingGeometry(.22,.28,32),
+    new THREE.MeshBasicMaterial({color:stop.color,transparent:true,opacity:.48,side:THREE.DoubleSide})
+  );
+  ring.rotation.x=-Math.PI/2; ring.position.set(p.x,-.84,p.z); ring.userData.stop=i; stopGroup.add(ring);
+});
+stopGroup.visible=false;
+
+
+/* GEO V2: reference-inspired layered face, headphones, backpack, boots,
+   compass antenna, heart and expression rig. Procedural preview, not a sculpted GLB. */
+const cream=mat(0xfff5db,.78), mint=mat(0x73ead6,.4), gold=mat(0xffb921,.3,.14),
+  navy=mat(0x073b62,.29), blush=mat(0xff9e90,.65), shine=mat(0xffffff,.12);
+function orb(parent,name,x,y,z,sx,sy,sz,material,seg=32){
+ const m=new THREE.Mesh(new THREE.SphereGeometry(1,seg,20),material);
+ m.name=name;m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.castShadow=true;parent.add(m);return m;
+}
+function disc(parent,x,y,z,r,depth,material){
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,depth,32),material);
+ m.rotation.x=Math.PI/2;m.position.set(x,y,z);m.castShadow=true;parent.add(m);return m;
+}
+const faceRig=new THREE.Group();faceRig.name='GeoFaceRig';head.add(faceRig);
+// The original head is retained as the turquoise shell. These features follow its movement.
+const muzzle=orb(faceRig,'ivory-face',0,-.23,.91,.80,.59,.24,cream);
+const browPatchL=orb(faceRig,'left-eye-patch',-.45,.15,.76,.39,.52,.18,cream);
+const browPatchR=orb(faceRig,'right-eye-patch',.45,.15,.76,.39,.52,.18,cream);
+const nose=orb(faceRig,'nose',0,-.22,1.16,.105,.073,.07,blush);
+const mouthDark=orb(faceRig,'open-smile',0,-.42,1.095,.245,.205,.055,mat(0x582d3a,.45));
+const tongue=orb(faceRig,'tongue',0,-.52,1.155,.14,.075,.026,blush);
+const tooth=orb(faceRig,'tooth',0,-.33,1.155,.12,.047,.018,shine);
+const browL=orb(faceRig,'left-brow',-.47,.52,.80,.25,.052,.06,navy);
+const browR=orb(faceRig,'right-brow',.47,.52,.80,.25,.052,.06,navy);
+const cheek2L=orb(faceRig,'cheek-blush-L',-.75,-.24,.94,.14,.075,.045,blush);
+const cheek2R=orb(faceRig,'cheek-blush-R',.75,-.24,.94,.14,.075,.045,blush);
+const eyeGlintL=orb(faceRig,'eye-glint-L',-.435,.21,1.075,.07,.075,.025,shine);
+const eyeGlintR=orb(faceRig,'eye-glint-R',.345,.21,1.075,.07,.075,.025,shine);
+const irisL=orb(faceRig,'iris-L',-.39,.11,1.07,.17,.20,.065,navy);
+const irisR=orb(faceRig,'iris-R',.39,.11,1.07,.17,.20,.065,navy);
+// Small rounded teal head tufts
+for(const side of [-1,1]){
+ const tuft=orb(head,'head-tuft',side*.79,.86,.0,.24,.20,.28,teal);
+ tuft.rotation.z=side*.35;
+ const ear=orb(head,'headphone-ear',side*1.13,.12,.02,.26,.39,.30,gold);
+ disc(head,side*1.34,.12,.05,.19,.09,mat(0xffd765,.28,.1));
+ orb(head,'ear-inner',side*1.39,.12,.09,.12,.18,.09,orange);
+ const glove=orb(geo,'mitten',side*1.14,.12,.28,.23,.24,.23,mint);
+ const boot=orb(geo,'sneaker',side*.36,-.99,.21,.35,.22,.45,cream);
+ orb(geo,'boot-toe',side*.36,-1.01,.52,.26,.13,.13,tealDark);
+}
+// Headphone arch, curved over top of head
+const archCurve=new THREE.CatmullRomCurve3([
+ new THREE.Vector3(-1.18,.17,.02),new THREE.Vector3(-1.06,.91,-.02),
+ new THREE.Vector3(0,1.15,-.06),new THREE.Vector3(1.06,.91,-.02),
+ new THREE.Vector3(1.18,.17,.02)]);
+head.add(new THREE.Mesh(new THREE.TubeGeometry(archCurve,40,.09,12,false),gold));
+// Backpack with flap, straps and clasp
+const backpack=new THREE.Group();backpack.name='ExplorerBackpack';geo.add(backpack);
+orb(backpack,'pack-shell',0,.43,-.69,.52,.68,.28,gold);
+orb(backpack,'pack-flap',0,.65,-.92,.42,.22,.08,orange);
+orb(backpack,'pack-clasp',0,.46,-.98,.10,.10,.045,cream);
+for(const x of [-.35,.35]){
+ const strapMesh=new THREE.Mesh(new THREE.BoxGeometry(.11,.9,.08),orange);
+ strapMesh.position.set(x,.46,-.37);strapMesh.rotation.z=x*.25;backpack.add(strapMesh);
+}
+// A luminous compass medallion on the chest.
+const chest=new THREE.Group();chest.name='CompassMedallion';chest.position.set(0,.53,.79);geo.add(chest);
+disc(chest,0,0,0,.31,.11,gold);
+disc(chest,0,0,.075,.24,.07,cream);
+const compassNeedle=new THREE.Mesh(new THREE.ConeGeometry(.105,.31,3),navy);
+compassNeedle.rotation.z=Math.PI;compassNeedle.rotation.x=Math.PI/2;compassNeedle.position.z=.13;chest.add(compassNeedle);
+orb(chest,'compass-center',0,0,.17,.055,.055,.025,teal);
+// Gold ring and cyan compass face around Geo's status antenna
+const halo=new THREE.Mesh(new THREE.TorusGeometry(.36,.045,10,48),gold);
+halo.position.y=.08;pin.add(halo);
+const pinCenter=orb(pin,'pin-compass',0,.09,.21,.15,.15,.04,cream);
+const pinStar=new THREE.Mesh(new THREE.OctahedronGeometry(.13,0),navy);
+pinStar.position.set(0,.09,.27);pin.add(pinStar);
+for(let i=0;i<8;i++){
+ const a=i*Math.PI/4;
+ const ray=orb(pin,'antenna-ray',Math.sin(a)*.47,.08+Math.cos(a)*.47,0,.025,.095,.025,gold,10);
+ ray.rotation.z=-a;
+}
+// Heart animation, only visible in favorite mode.
+const heart=new THREE.Group();heart.name='PulsatingHeart';geo.add(heart);
+const heartMaterial=mat(0xff4f78,.22,.05,0xff315a,.65);
+orb(heart,'heart-left',-.14,.12,0,.19,.19,.12,heartMaterial);
+orb(heart,'heart-right',.14,.12,0,.19,.19,.12,heartMaterial);
+const heartTip=new THREE.Mesh(new THREE.ConeGeometry(.27,.42,4),heartMaterial);
+heartTip.rotation.y=Math.PI/4;heartTip.rotation.z=Math.PI;heartTip.position.y=-.15;heart.add(heartTip);
+heart.position.set(.95,1.2,.98);heart.visible=false;
+const sparkles=[];
+function explode(count=34){
+ for(let i=0;i<count;i++){
+  const shape=i%4===0?new THREE.OctahedronGeometry(.075):new THREE.SphereGeometry(.042,6,5);
+  const p=new THREE.Mesh(shape,new THREE.MeshBasicMaterial({color:[0xffd23f,0x20e0c2,0xff6085,0x8d76ff,0xffffff][i%5]}));
+  p.position.copy(geo.position).add(new THREE.Vector3(0,1.4,0));
+  p.userData.velocity=new THREE.Vector3((Math.random()-.5)*4,Math.random()*3+1,(Math.random()-.5)*3);
+  p.userData.life=1.4;scene.add(p);sparkles.push(p);
+ }
+}
+function animateExtras(t,dt){
+ const phase=stateSince?Math.max(0,performance.now()/1000-stateSince):0;
+ const excited=['favorite','top3','celebrate','newhome','arrive'].includes(state);
+ heart.visible=state==='favorite';
+ if(heart.visible){const beat=1+.2*Math.pow(Math.max(0,Math.sin(t*9)),3);heart.scale.setScalar(beat);heart.rotation.z=Math.sin(t*2)*.13;}
+ mouthDark.scale.y=state==='thinking'?.75:excited?1.18:1;
+ tongue.visible=state!=='thinking';
+ browL.rotation.z=state==='thinking'?.28:excited?-.18:0;
+ browR.rotation.z=state==='thinking'?-.28:excited?.18:0;
+ irisL.position.x=state==='point'?-.26:-.39;
+ irisR.position.x=state==='point'?.52:.39;
+ halo.rotation.z=t*.65;pinStar.rotation.z=-t*1.5;
+ pin.scale.setScalar((state==='favorite'?1.1:1)*(1+.055*Math.sin(t*5.8)));
+ for(let i=sparkles.length-1;i>=0;i--){
+  const p=sparkles[i];p.position.addScaledVector(p.userData.velocity,dt);
+  p.userData.velocity.y-=dt*4;p.rotation.x+=dt*4;p.rotation.y+=dt*3;
+  p.userData.life-=dt;
+  p.material.opacity=Math.max(0,p.userData.life/1.4);p.material.transparent=true;
+  if(p.userData.life<=0){scene.remove(p);p.geometry.dispose();p.material.dispose();sparkles.splice(i,1);}
+ }
+}
+
+const states={
+ idle:{label:'READY · IDLE',color:0x20e0c2,text:'“Hey! I found a home worth exploring. Want to take a look?”'},
+ thinking:{label:'MUSE · THINKING',color:0xa78bfa,text:'“Hmm… let me connect that question with what we already know.”'},
+ favorite:{label:'FAVORITE · HEART',color:0xff6688,text:'“Ohhh, this one made your Top 3!”'},
+ pricedrop:{label:'PRICE DROP · ALERT',color:0xff7b61,text:'“Good news — the price just dropped. Let’s see what that does to the payment.”'},
+ newhome:{label:'NEW HOME · FOUND',color:0xffd45c,text:'“I found a new curated home for you!”'},
+ point:{label:'GUIDE · LOOK HERE',color:0x55dfff,text:'“This way! I want to show you something nearby.”'},
+ drive:{label:'TRAVELING · COMMUTE',color:0x4ca7ff,text:'“Buckle up. Let’s ride the route to work.”'},
+ saturday:{label:'SATURDAY · 4-HOME TOUR',color:0xffb84d,text:'“Saturday tour ready! Four curated homes, one easy route. Let’s go explore.”'},
+ arrive:{label:'ARRIVED · DESTINATION',color:0x55e39a,text:'“We made it! That stop is now part of your Home Quest.”'},
+ top3:{label:'TOP 3 · ACHIEVEMENT',color:0xffd45c,text:'“Top 3 locked in. You’re getting closer!”'},
+ celebrate:{label:'CELEBRATE · WIN',color:0xffd45c,text:'“YES! Home Quest progress!”'}
+};
+let state='idle',stateSince=0,routeT=0,blink=0,blinkNext=2.5;
+
+function setState(next){
+ state=next;stateSince=performance.now()/1000;
+ const s=states[next];
+ document.getElementById('statusText').textContent=s.label;
+ const dot=document.getElementById('statusDot');dot.style.color='#'+s.color.toString(16).padStart(6,'0');dot.style.background=dot.style.color;
+ document.getElementById('bubble').innerHTML=next==='thinking'?'<span class="typing">Geo is listening… Muse is thinking<span id="dots">...</span></span>':s.text;
+ document.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.state===next));
+ const c=new THREE.Color(s.color);pinMat.color.copy(c);pinMat.emissive.copy(c);pinLight.color.copy(c);rim.color.copy(c);
+ car.visible=next==='drive'||next==='saturday'||next==='arrive';routeTube.visible=car.visible;
+ if(next==='drive'||next==='saturday')routeT=0;
+ stopGroup.visible=next==='saturday'||next==='drive'||next==='arrive';
+ if(next==='celebrate'||next==='top3'||next==='newhome'||next==='arrive') { burst(); explode(next==='celebrate'?60:32); }
+}
+
+function burst(){
+ for(let i=0;i<18;i++){const p=new THREE.Mesh(new THREE.SphereGeometry(.045,8,8),new THREE.MeshBasicMaterial({color:0xffd45c}));p.position.copy(geo.position);p.userData.v=new THREE.Vector3((Math.random()-.5)*2,Math.random()*2+.7,(Math.random()-.5)*1.2);scene.add(p);setTimeout(()=>scene.remove(p),1300);p.userData.birth=performance.now()/1000;}
+}
+
+document.querySelectorAll('button[data-state]').forEach(b=>b.addEventListener('click',()=>setState(b.dataset.state)));
+
+const clock=new THREE.Clock();
+function animate(){
+ requestAnimationFrame(animate);
+ const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+ const phase=stateSince?Math.max(0,performance.now()/1000-stateSince):0;
+ // breathing + subtle living motion
+ geo.position.y=.15+Math.sin(t*2.2)*.035;
+ head.rotation.z=Math.sin(t*1.3)*.035;
+ head.rotation.y=Math.sin(t*.75)*.08;
+ // blink
+ if(t>blinkNext){blink=1;blinkNext=t+2.3+Math.random()*3;}
+ blink=Math.max(0,blink-dt*9);
+ const eyeScale=1-.86*blink;
+ eyeL.scale.y=eyeScale*.98;eyeR.scale.y=eyeScale*.98;
+ // eye attention
+ let tx=0,ty=0;
+ if(state==='point'||state==='newhome')tx=.16;
+ if(state==='thinking')tx=-.12;
+ if(state==='drive')tx=Math.sin(t*1.7)*.12;
+ pupilL.position.x=THREE.MathUtils.lerp(pupilL.position.x,-.39+tx,.12);
+ pupilR.position.x=THREE.MathUtils.lerp(pupilR.position.x,.39+tx,.12);
+ pupilL.position.y=THREE.MathUtils.lerp(pupilL.position.y,1.95+ty,.12);pupilR.position.y=pupilL.position.y;
+ // mouth = talking/listening
+ const talking=['thinking','pricedrop','newhome','point','arrive','celebrate'].includes(state) && Math.sin(t*8)>0;
+ mouth.scale.y=THREE.MathUtils.lerp(mouth.scale.y,talking?1.5:1,.2);
+ // state-specific body language
+ armL.rotation.z=0;armR.rotation.z=0;geo.rotation.set(0,0,0);
+ if(state==='point'){armR.rotation.z=-.95;armR.rotation.x=-.25;geo.rotation.y=Math.sin(t*1.6)*.18;}
+ if(state==='thinking'){geo.rotation.z=Math.sin(t*2)*.045;head.rotation.z=-.14+Math.sin(t*1.2)*.04;}
+ if(state==='favorite'){pin.scale.setScalar(1+Math.sin(t*8)*.13);body.rotation.z=Math.sin(t*3)*.04;}
+ else pin.scale.setScalar(1);
+ if(state==='pricedrop'){pin.rotation.z=Math.sin(t*7)*.18;}
+ if(state==='newhome'){geo.rotation.y=Math.sin(t*4)*.12;}
+ if(state==='top3'||state==='celebrate'){geo.position.y=.2+Math.abs(Math.sin(t*5))* .16;armL.rotation.z=.8;armR.rotation.z=-.8;}
+ if(state==='saturday'){
+   // Saturday open-house loop: Geo rides the plotted route through four curated home stops.
+   routeT=(routeT+dt*.032)%1;
+   const p=routeCurve.getPointAt(routeT),p2=routeCurve.getPointAt(Math.min(routeT+.01,1));
+   car.position.copy(p);car.lookAt(p2);car.rotation.y+=Math.PI/2;
+   // Geo crouches into the vehicle and rides with it; keep Geo independent so idle mode never disappears.
+   geo.position.set(p.x,p.y+1.03,p.z);
+   geo.rotation.y=car.rotation.y;
+   geo.rotation.x=-.08+Math.sin(t*7)*.025;
+   geo.scale.set(.82,.78,.82);
+ }
+ if(state==='drive'){
+   routeT=(routeT+dt*.055)%1;
+   const p=routeCurve.getPointAt(routeT),p2=routeCurve.getPointAt(Math.min(routeT+.01,1));
+   car.position.copy(p);car.lookAt(p2);car.rotation.y+=Math.PI/2;
+   geo.position.set(p.x,p.y+1.03,p.z);
+   geo.rotation.y=car.rotation.y;
+   geo.rotation.x=-.08+Math.sin(t*7)*.025;
+   geo.scale.set(.82,.78,.82);
+ }
+ if(state!=='drive'&&state!=='saturday'){
+   geo.scale.lerp(new THREE.Vector3(1,1,1),.12);
+   geo.rotation.x=THREE.MathUtils.lerp(geo.rotation.x,0,.12);
+ }
+ if(state==='arrive'){
+   geo.position.y=.15+Math.abs(Math.sin(t*5))*.13;
+   geo.rotation.y=Math.sin(t*4)*.15;
+   geo.scale.lerp(new THREE.Vector3(1,1,1),.12);
+ }
+ animateExtras(t,dt);
+ // tiny pin breathing
+ pinLight.intensity=2.7+Math.sin(t*5)*.7;
+ // particles
+ scene.children.forEach(o=>{if(o.userData.v){o.position.addScaledVector(o.userData.v,dt);o.userData.v.y-=2.4*dt;}});
+ renderer.render(scene,camera);
+}
+setState('idle');animate();
+
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));});
+</script>
+</body>
+</html>
