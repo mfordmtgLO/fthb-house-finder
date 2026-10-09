@@ -11,7 +11,6 @@
  * Full GLBA compliance audit ledger stamping, zero-trust PII sanitization.
  */
 
-import { GoogleGenAI } from '@google/genai';
 import { sanitizePiiInput, detectBuyerActionItems, recordAuditLedger, pushToMikeIPhone } from './compliance.ts';
 import { MIKE_FORD_LO_PROFILE, getPairedAgentForCity, type LoanOfficerProfile, type AgentProfile } from './agentPairings.ts';
 import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
@@ -155,47 +154,7 @@ export async function generateMuseNoteResponse(params: {
 
   const firstName = authorName.split(' ')[0] || 'there';
 
-  // Build Gemini Prompt if API key is present
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (geminiApiKey && geminiApiKey !== 'MY_GEMINI_API_KEY') {
-    try {
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const prompt = `You are Muse, the warm, encouraging, highly skilled first-time homebuyer assistant for Mike Ford, NMLS #288455.
-You are replying directly to a buyer's note on the property: ${listing ? `${listing.address}, ${listing.city} ($${listing.price?.toLocaleString()})` : 'Curated Home'}.
-
-BUYER NAME: ${firstName}
-BUYER INQUIRY: "${noteText}"
-
-GROUNDING KNOWLEDGE & CALCULATOR OUTPUT (CRITICAL - DO NOT INVENT ANY NUMBERS):
-${costGrounding || 'Standard FTHB loan programs: FHA 3.5% down, Conventional 3% down, USDA 0% down in eligible rural boundaries, state DPA grants.'}
-${vantageGrounding}
-
-GOLDEN TONGUE & COMPLIANCE RULES:
-1. Warm, uplifting, plain language that builds confidence. Celebrate that they asked a smart question.
-2. If timing/waiting is asked: quote the EXACT numbers from the calculator grounding above (e.g. 1-year total cost of waiting, cumulative rent, missed equity paydown, projected price increase). Explicitly state that 3.5% appreciation is an economic assumption, not a guarantee.
-3. If buydown is asked: clearly explain a 2-1 buydown as a seller-paid credit that lowers their interest rate by 2% in year 1 and 1% in year 2, giving substantial breathing room on monthly payments.
-4. "Likely qualifies" qualified language on all program eligibility statements (CFPB Reg Z compliance). Zero guarantee claims.
-5. End with the standard human escalation: "Want Mike Ford (NMLS #288455) to review your personal scenario or give you a quick call?"
-6. Keep length concise and readable (2 short paragraphs).`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt
-      });
-
-      if (response.text && response.text.trim().length > 0) {
-        return {
-          text: response.text.trim(),
-          citations,
-          isCostOfWaiting: isTimingQuestion
-        };
-      }
-    } catch (err) {
-      console.warn('[Muse Note AI Fallback Activated]', err);
-    }
-  }
-
-  // Deterministic Golden-Tongue Fallback (Guarantees zero invented numbers and strict compliance)
+  // Deterministic Golden-Tongue Response (Scripted-Only Architecture)
   if (isTimingQuestion && costReport) {
     const oneYr = costReport.intervals[1];
     const text = `You're asking a really smart question, ${firstName}! Deciding whether to buy now or wait is one of the most common dilemmas for first-time buyers.

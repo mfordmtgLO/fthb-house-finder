@@ -1815,6 +1815,34 @@ async function runTests() {
       results.push({ id: 'KS-P5', name: 'Full regression: all prior test groups pass; tsc + Vite clean', group: 'GROUP KS-P: KILL SWITCH & CONTROL PLANE (PLUGIN)', status: 'FAIL', detail: e.message, complianceEvidence: '' });
     }
 
+    // GT1. Guard Test: Scripted-Only Architecture Verification
+    try {
+      const serverFiles = ['server.ts', 'src/server/museEngine.ts', 'src/server/propertyNotes.ts', 'src/server/compliance.ts', 'src/server/agentPairings.ts', 'src/server/curatedData.ts', 'src/server/vantageKnowledge.ts', 'src/server/costOfWaiting.ts'];
+      let aiFound = false;
+      let culprit = '';
+      for (const f of serverFiles) {
+        const fullPath = path.join(process.cwd(), f);
+        if (fs.existsSync(fullPath)) {
+          const content = fs.readFileSync(fullPath, 'utf8');
+          if (content.includes('gemini-') || content.includes('generateContent') || content.includes('GoogleGenAI')) {
+            aiFound = true;
+            culprit = f;
+            break;
+          }
+        }
+      }
+      results.push({
+        id: 'GT1',
+        name: 'Guard Test: Zero AI composition calls, GoogleGenAI imports, or gemini- model strings in server code',
+        group: 'GROUP GT: SCRIPTED-ONLY ARCHITECTURE GUARD',
+        status: aiFound ? 'FAIL' : 'PASS',
+        detail: aiFound ? `AI composition reference found in ${culprit}` : 'Zero AI composition references, GoogleGenAI imports, or gemini- model strings verified across all server files.',
+        complianceEvidence: 'Scripted-only architecture constitution enforced.'
+      });
+    } catch (e: any) {
+      results.push({ id: 'GT1', name: 'Guard Test: Zero AI composition calls, GoogleGenAI imports, or gemini- model strings in server code', group: 'GROUP GT: SCRIPTED-ONLY ARCHITECTURE GUARD', status: 'FAIL', detail: e.message, complianceEvidence: '' });
+    }
+
     // =========================================================================
     // GENERATE TEST-RESULTS.md
     // =========================================================================

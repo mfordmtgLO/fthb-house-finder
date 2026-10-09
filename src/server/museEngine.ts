@@ -7,7 +7,6 @@
  * Mike's conversation inbox reads directly from fthb_conversations.
  */
 
-import { GoogleGenAI } from '@google/genai';
 import { queryVantageGrounding } from './vantageKnowledge.ts';
 import { queryCuratedListings, type CuratedListing } from './curatedData.ts';
 import { pushToMikeIPhone, sanitizePiiInput, detectBuyerActionItems, recordAuditLedger } from './compliance.ts';
@@ -509,59 +508,11 @@ export async function handleBuyerMessage(
     platter = await queryCuratedListings({});
   }
 
-  // Attempt server-side Gemini API call
   let museReplyText = '';
   let citations: string[] = ['NMLS #288455 Mike Ford Lending Knowledge'];
   let isEscalation = false;
 
   const memoryRecallBlock = await buildMemoryRecallBlock(leadId, session);
-
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (geminiApiKey && geminiApiKey !== 'MY_GEMINI_API_KEY') {
-    try {
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const prompt = `You are Muse, the intelligent, warm, encouraging first-time homebuyer assistant for Mike Ford (NMLS #288455).
-Mike is a licensed mortgage loan officer specializing in helping renters transition into homeownership with low/no down payment programs, seller credits, and 2-1 buydowns.
-
-GOLDEN TONGUE & COMPLIANCE RULES:
-1. Warm, plain-language, confidence-building tone. Celebrate that they are asking smart questions.
-2. NEVER guarantee rates or qualification. Use "likely qualifies based on curated guidelines."
-3. If timing or cost-of-waiting is asked: quote the EXACT numbers from the deterministic calculator grounding below. Stated appreciation is an economic assumption, not a guarantee.
-4. If the buyer asks for exact mortgage payments, custom rate quotes, credit qualification, or specific underwriting math, ALWAYS include the standard escalation: "let's check in with Mike for more details" or "let's ping Mike to answer your question."
-5. EDUCATE on offer strategies: mention 2-1 temporary buydowns (seller funded discount reducing rate by 2% year 1, 1% year 2) and seller credits toward closing costs.
-6. MEMORY & CONTEXT RULE: If the buyer references 'that house', 'the Beaverton one', or asks a follow-up without naming a property, resolve it against RECENT PROPERTY CONVERSATIONS and favorites. Name the property explicitly in your reply so the buyer knows you remember.
-
-GROUNDING KNOWLEDGE & CALCULATOR OUTPUT (CRITICAL - DO NOT INVENT NUMBERS):
-${costGrounding || 'Standard FTHB programs: FHA 3.5% down, Conventional 3% down, USDA 0% in eligible rural areas, state DPA grants.'}
-${grounding}
-
-BUYER CURRENT PREFERENCES:
-City: ${session.statedPreferences.city || 'Not specified'}
-Max Monthly Payment: ${session.statedPreferences.maxMonthlyPayment || 'Not specified'}
-Income Bracket: ${session.statedPreferences.incomeBracket || 'Not specified'}
-Favorites: ${session.statedPreferences.favorites.join(', ') || 'None yet'}
-
-${memoryRecallBlock}
-
-BUYER MESSAGE:
-"${cleanText}"
-
-Respond concisely (2-3 paragraphs maximum). If appropriate, reference the curated platter of matching Pacific Northwest homes available below.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt
-      });
-
-      if (response.text) {
-        museReplyText = response.text.trim();
-        citations.push('Vantage 2nd Brain Knowledge Base', 'Gemini 2.5 Flash');
-        if (costReport) citations.push('Deterministic Cost-of-Waiting Calculator');
-      }
-    } catch (e: unknown) {
-      console.warn('[Muse Gemini Fallback Activated]', e);
-    }
-  }
 
   // Check for Curation Intake Flow (Prompt B Spec 3)
   const lowerText = cleanText.toLowerCase();
@@ -599,7 +550,7 @@ Respond concisely (2-3 paragraphs maximum). If appropriate, reference the curate
     }
   }
 
-  // Deterministic Compliance Fallback if Gemini not keyed or rate limited
+  // Deterministic Compliance Response Tree (Scripted-Only Architecture)
   if (!museReplyText) {
     const isShowingOrHighIntent =
       actionCheck.actionCategory === 'SHOWING_REQUEST' ||
