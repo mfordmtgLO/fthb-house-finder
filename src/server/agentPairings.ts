@@ -93,31 +93,26 @@ export async function getPairingDetails(pairingId: string): Promise<PairingDetai
 
     const agentId = pairingData.agentId;
     const loId = pairingData.loId;
-    if (!agentId) return null;
+    if (!agentId || !loId) return null;
 
     const agent = await getAgentById(agentId);
     if (!agent) return null;
 
-    let lo: LoanOfficerProfile = MIKE_FORD_LO_PROFILE;
-    if (loId) {
-      try {
-        const loDoc = await db.collection('loanOfficers').doc(loId).get();
-        if (loDoc.exists) {
-          const loData = loDoc.data();
-          if (loData) {
-            lo = {
-              name: loData.name || MIKE_FORD_LO_PROFILE.name,
-              title: loData.title || MIKE_FORD_LO_PROFILE.title,
-              nmlsId: loData.nmlsId || MIKE_FORD_LO_PROFILE.nmlsId,
-              phone: loData.phone || MIKE_FORD_LO_PROFILE.phone,
-              email: loData.email || MIKE_FORD_LO_PROFILE.email,
-              photoUrl: loData.photoUrl || MIKE_FORD_LO_PROFILE.photoUrl,
-              company: loData.company || MIKE_FORD_LO_PROFILE.company
-            };
-          }
-        }
-      } catch {}
-    }
+    // An active pairing must resolve to a real loan-officer record.
+    // Never silently substitute Mike Ford for missing/malformed LO data.
+    const loDoc = await db.collection('loanOfficers').doc(loId).get();
+    if (!loDoc.exists) return null;
+    const loData = loDoc.data();
+    if (!loData?.name || !loData?.nmlsId) return null;
+    const lo: LoanOfficerProfile = {
+      name: String(loData.name),
+      title: String(loData.title || ''),
+      nmlsId: String(loData.nmlsId),
+      phone: String(loData.phone || ''),
+      email: String(loData.email || ''),
+      photoUrl: String(loData.photoUrl || ''),
+      company: String(loData.company || '')
+    };
 
     return {
       id: pairingData.id || pairingId,
