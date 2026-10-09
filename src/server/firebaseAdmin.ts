@@ -18,6 +18,7 @@ const PRODUCTION_DATABASE_ID = 'ai-studio-vantageaiworkspa-320759cc-ded2-4188-b4
 const STAGING_PROJECT_ID = 'astral-web-439103-g7';
 const STAGING_DATABASE_ID = 'fthb-geo-staging';
 const APP_NAME = 'homebuyer-project';
+const EMULATOR_PROJECT_ID = 'demo-geo-staging';
 
 let adminApp: App | null = null;
 let firestoreDb: Firestore | null = null;
@@ -29,8 +30,17 @@ let firestoreDb: Firestore | null = null;
  * approved migration; never infer staging from NODE_ENV.
  */
 export function resolveFirestoreTarget(env: NodeJS.ProcessEnv = process.env):
-  { projectId: string | null; databaseId: string; target: 'staging' | 'production' } {
+  { projectId: string | null; databaseId: string; target: 'staging' | 'production' | 'emulator' } {
   const target = env.GEO_FIRESTORE_TARGET;
+  if (target === 'emulator') {
+    if (env.NODE_ENV === 'production' ||
+        env.GOOGLE_CLOUD_PROJECT !== EMULATOR_PROJECT_ID ||
+        env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080' ||
+        env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      throw new Error('GEO_EMULATOR_CONFIGURATION_REJECTED');
+    }
+    return { projectId: EMULATOR_PROJECT_ID, databaseId: STAGING_DATABASE_ID, target: 'emulator' };
+  }
   if (target === 'staging') {
     if (env.GEO_FIRESTORE_PROJECT_ID !== STAGING_PROJECT_ID ||
         env.GEO_FIRESTORE_DATABASE_ID !== STAGING_DATABASE_ID) {
@@ -58,6 +68,19 @@ export function getAdminFirestore(): Firestore | null {
     return null;
   }
 
+  if (target.target === 'emulator') {
+    try {
+      const existing = getApps().find(a => a.name === APP_NAME);
+      adminApp = existing || initializeApp({ projectId: EMULATOR_PROJECT_ID }, APP_NAME);
+      if (adminApp.options.projectId !== EMULATOR_PROJECT_ID) throw new Error('EMULATOR_PROJECT_MISMATCH');
+      firestoreDb = getFirestore(adminApp, STAGING_DATABASE_ID);
+      firestoreDb.settings({ ignoreUndefinedProperties: true });
+      return firestoreDb;
+    } catch (err: any) {
+      console.error('[Firebase Admin] Emulator initialization refused:', err.message);
+      return null;
+    }
+  }
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!serviceAccountJson || !serviceAccountJson.trim()) {
     console.error('[Firebase Admin] Missing FIREBASE_SERVICE_ACCOUNT_JSON; failing closed.');
