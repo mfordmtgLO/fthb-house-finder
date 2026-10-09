@@ -144,7 +144,7 @@ export function matchGeoCommand(raw: string, context: GeoCommandContext): GeoCom
   }
 
   if (FINANCE.test(text)) {
-    if (!context.assignedLoanOfficer?.id) return result('MORTGAGE_HANDOFF', 'GEO_FINANCE_TEAM', 'That's a good question for your licensed loan officer. Would you like to contact your homebuying team?', 'attentive');
+    if (!context.assignedLoanOfficer?.id) return result('MORTGAGE_HANDOFF', 'GEO_FINANCE_TEAM', "That's a good question for your licensed loan officer. Would you like to contact your homebuying team?", 'attentive');
     return result('MORTGAGE_HANDOFF', 'GEO_FINANCE_HANDOFF', `That's a great question for ${lo}. Would you like me to prepare a request for a call?`, 'attentive', { type: 'PREPARE_CONTACT_REQUEST', recipientRole: 'lo', listingId: context.selectedListingId }, true);
   }
 
