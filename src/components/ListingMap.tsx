@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { Maximize2, Minimize2, List, Layers, MapPin, Home } from 'lucide-react';
 import { CuratedListing } from '../types';
+import { OREGON_LMI_TRACTS } from '../data/oregonLmiTracts';
 
 interface ListingMapProps {
   listings: CuratedListing[];
@@ -27,7 +28,25 @@ export const ListingMap: React.FC<ListingMapProps> = ({
   const currentTileLayerRef = useRef<L.Layer | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [mapTheme, setMapTheme] = useState<'osm' | 'esri'>('osm');
+  const [mapTheme, setMapTheme] = useState<'osm' | 'esri' | 'satellite'>('osm');
+  const [showLowTracts, setShowLowTracts] = useState(false);
+  const [showModerateTracts, setShowModerateTracts] = useState(false);
+  const [tractStatus, setTractStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [tractCount, setTractCount] = useState(0);
+  const tractLayerRef = useRef<L.GeoJSON | null>(null);
+  const [showLayers, setShowLayers] = useState(false);
+
+  // External imagery viewers use the map center; no Google API keys or imagery are embedded.
+  const openExternalView = (kind: 'street' | 'earth') => {
+    const center = mapInstanceRef.current?.getCenter();
+    if (!center) return;
+    const latitude = center.lat.toFixed(6);
+    const longitude = center.lng.toFixed(6);
+    const url = kind === 'street'
+      ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${latitude}%2C${longitude}`
+      : `https://earth.google.com/web/search/${latitude}%2C${longitude}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   // Initialize Leaflet map
   useEffect(() => {
@@ -49,7 +68,7 @@ export const ListingMap: React.FC<ListingMapProps> = ({
     };
   }, []);
 
-  // Handle Tile Layers (100% Watermark-Free & Zero API Key Required: OSM & Esri World Street Map)
+  // Base map switcher: street maps and Esri World Imagery (attribution required).
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -67,8 +86,8 @@ export const ListingMap: React.FC<ListingMapProps> = ({
 
       osmLayer.addTo(map);
       currentTileLayerRef.current = osmLayer;
-    } else {
-      // Esri World Street Map — keyless, zero watermarks across all zoom levels
+    } else if (mapTheme === 'esri') {
+      // Esri World Street Map
       const esriLayer = L.tileLayer(
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
         {
@@ -79,8 +98,120 @@ export const ListingMap: React.FC<ListingMapProps> = ({
 
       esriLayer.addTo(map);
       currentTileLayerRef.current = esriLayer;
+    } else {
+      // Esri World Imagery satellite/aerial basemap, subject to provider usage terms.
+      const imagery = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+          maxZoom: 19
+        }
+      );
+      imagery.addTo(map);
+      currentTileLayerRef.current = imagery;
     }
   }, [mapTheme]);
+
+  // Request actual census tract geometry for the visible Oregon map bounds, then
+  // classify it using the Geosphere-maintained GEOID snapshot. Never guess polygons.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    if (tractLayerRef.current) {
+      map.removeLayer(tractLayerRef.current);
+      tractLayerRef.current = null;
+    }
+    if (!showLowTracts && !showModerateTracts) {
+      setTractStatus('idle');
+      setTractCount(0);
+      return;
+    }
+
+    let controller: AbortController | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    const fetchTracts = () => {
+      controller?.abort();
+      controller = new AbortController();
+      setTractStatus('loading');
+      const bounds = map.getBounds();
+      // Clip requested area to Oregon; avoid large and unnecessary geometry responses.
+      const xmin = Math.max(-124.8, bounds.getWest());
+      const ymin = Math.max(41.9, bounds.getSouth());
+      const xmax = Math.min(-116.4, bounds.getEast());
+      const ymax = Math.min(46.4, bounds.getNorth());
+      if (xmin >= xmax || ymin >= ymax) {
+        setTractStatus('ready');
+        setTractCount(0);
+        return;
+      }
+      const params = new URLSearchParams({
+        where: "STATEFP='41'",
+        geometry: JSON.stringify({ xmin, ymin, xmax, ymax, spatialReference: { wkid: 4326 } }),
+        geometryType: 'esriGeometryEnvelope',
+        spatialRel: 'esriSpatialRelIntersects',
+        inSR: '4326',
+        outSR: '4326',
+        outFields: 'GEOID,NAME,STATEFP',
+        returnGeometry: 'true',
+        f: 'geojson'
+      });
+      const endpoint = 'https://services1.arcgis.com/Ua5sDmgJbxcvNy4f/arcgis/rest/services/Census_Tracts_2020/FeatureServer/0/query';
+      fetch(endpoint + '?' + params.toString(), { signal: controller.signal })
+        .then(async response => {
+          if (!response.ok) throw new Error('Tract geometry source unavailable');
+          const geojson = await response.json();
+          if (geojson.error || geojson.type !== 'FeatureCollection' || !Array.isArray(geojson.features)) {
+            throw new Error('Invalid tract geometry response');
+          }
+          if (disposed) return;
+          const filtered = geojson.features.filter((feature: any) => {
+            const geoid = String(feature.properties?.GEOID ?? feature.properties?.geoid ?? '');
+            const category = OREGON_LMI_TRACTS[geoid];
+            return category === 'Low' ? showLowTracts : category === 'Moderate' && showModerateTracts;
+          });
+          if (tractLayerRef.current) map.removeLayer(tractLayerRef.current);
+          const layer = L.geoJSON({ type: 'FeatureCollection', features: filtered } as GeoJSON.FeatureCollection, {
+            style: (feature) => {
+              const low = OREGON_LMI_TRACTS[String(feature?.properties?.GEOID ?? '')] === 'Low';
+              return { color: low ? '#e11d48' : '#ca8a04', fillColor: low ? '#fb7185' : '#fde047',
+                fillOpacity: 0.28, weight: 1.6, opacity: 0.9 };
+            },
+            onEachFeature: (feature, tractLayer) => {
+              const geoid = String(feature.properties?.GEOID ?? '');
+              const category = OREGON_LMI_TRACTS[geoid];
+              tractLayer.bindPopup(`<strong>${category === 'Low' ? 'Low-income' : 'Moderate-income'} census tract</strong><br/>GEOID: ${geoid}<br/><small>Geographic indicator only; program and buyer eligibility require verification.</small>`);
+            }
+          });
+          layer.addTo(map);
+          tractLayerRef.current = layer;
+          setTractCount(filtered.length);
+          setTractStatus('ready');
+        })
+        .catch(err => {
+          if (disposed || err.name === 'AbortError') return;
+          setTractStatus('error');
+          setTractCount(0);
+          if (tractLayerRef.current) {
+            map.removeLayer(tractLayerRef.current);
+            tractLayerRef.current = null;
+          }
+        });
+    };
+    const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(fetchTracts, 350); };
+    fetchTracts();
+    map.on('moveend', schedule);
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+      map.off('moveend', schedule);
+      if (tractLayerRef.current) {
+        map.removeLayer(tractLayerRef.current);
+        tractLayerRef.current = null;
+      }
+    };
+  }, [showLowTracts, showModerateTracts]);
 
   // Update Markers
   useEffect(() => {
@@ -273,16 +404,12 @@ export const ListingMap: React.FC<ListingMapProps> = ({
 
       {/* Floating Controls Bar: Right */}
       <div className="absolute top-3 right-3 z-[1000] flex items-center space-x-1.5">
-        {/* Map Layer Switcher: OpenStreetMap vs Esri World Street Map */}
-        <button
-          onClick={() => setMapTheme(mapTheme === 'osm' ? 'esri' : 'osm')}
-          className="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-900/90 hover:bg-slate-900 text-white font-medium text-xs border border-slate-700 shadow-xl backdrop-blur-md flex items-center gap-1.5 transition-all"
-          title="Toggle Keyless Map Tile Provider"
-        >
-          <Layers className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-          <span className="hidden sm:inline">{mapTheme === 'osm' ? '🗺️ OpenStreetMap' : '🗺️ Esri Streets'}</span>
-          <span className="sm:hidden text-[11px]">{mapTheme === 'osm' ? 'OSM' : 'Esri'}</span>
-        </button>
+        <div className="flex items-center gap-1 rounded-xl bg-slate-900/95 border border-slate-700 p-1 shadow-xl">
+          <button onClick={() => setMapTheme('osm')} aria-pressed={mapTheme === 'osm'} className={`rounded-lg px-2 py-1.5 text-[11px] font-semibold ${mapTheme === 'osm' ? 'bg-cyan-600 text-white' : 'text-slate-200 hover:bg-slate-700'}`}>Street</button>
+          <button onClick={() => setMapTheme('satellite')} aria-pressed={mapTheme === 'satellite'} className={`rounded-lg px-2 py-1.5 text-[11px] font-semibold ${mapTheme === 'satellite' ? 'bg-cyan-600 text-white' : 'text-slate-200 hover:bg-slate-700'}`}>Satellite</button>
+          <button onClick={() => setMapTheme('esri')} aria-pressed={mapTheme === 'esri'} className={`hidden sm:block rounded-lg px-2 py-1.5 text-[11px] font-semibold ${mapTheme === 'esri' ? 'bg-cyan-600 text-white' : 'text-slate-200 hover:bg-slate-700'}`}>Esri</button>
+          <button onClick={() => setShowLayers(!showLayers)} aria-expanded={showLayers} title="Census tract layers and external views" className="rounded-lg px-2 py-1.5 text-white hover:bg-slate-700"><Layers className="w-4 h-4" /></button>
+        </div>
 
         {/* Fullscreen Button */}
         <button
@@ -293,6 +420,24 @@ export const ListingMap: React.FC<ListingMapProps> = ({
           {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
         </button>
       </div>
+
+      {showLayers && (
+        <div className="absolute top-16 right-3 z-[1000] w-[min(300px,calc(100vw-28px))] bg-slate-900/95 border border-slate-700 rounded-xl p-4 text-white shadow-2xl space-y-3">
+          <div className="text-sm font-bold">Oregon Census Tract Overlays</div>
+          <label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={showLowTracts} onChange={e => setShowLowTracts(e.target.checked)} className="accent-rose-500" /><span className="w-3 h-3 rounded bg-rose-400" />Low-income tracts</label>
+          <label className="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" checked={showModerateTracts} onChange={e => setShowModerateTracts(e.target.checked)} className="accent-yellow-400" /><span className="w-3 h-3 rounded bg-yellow-300" />Moderate-income tracts</label>
+          <div role="status" className="text-[11px] text-slate-300">
+            {tractStatus === 'loading' ? 'Loading tract boundaries…' : tractStatus === 'error' ? 'Tract geometry unavailable. No boundaries shown.' : tractStatus === 'ready' ? `${tractCount} matching tracts visible` : 'Enable an overlay to view tract boundaries.'}
+          </div>
+          <p className="text-[10px] text-slate-400 leading-relaxed">Geosphere LMI GEOID snapshot + 2020 census geometry. Geographic indicators only; not a mortgage eligibility determination. Verify program rules and data currency.</p>
+          <div className="border-t border-slate-700 pt-3 text-xs font-bold">Explore map center</div>
+          <div className="flex gap-2">
+            <button onClick={() => openExternalView('street')} className="flex-1 rounded-lg bg-slate-700 hover:bg-slate-600 p-2 text-xs">Street View ↗</button>
+            <button onClick={() => openExternalView('earth')} className="flex-1 rounded-lg bg-slate-700 hover:bg-slate-600 p-2 text-xs">Google Earth 3D ↗</button>
+          </div>
+          <p className="text-[10px] text-slate-400">Opens external Google viewers; imagery availability varies.</p>
+        </div>
+      )}
 
       {/* Map Legend Overlay */}
       {listings.length > 0 && (
