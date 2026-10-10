@@ -69,7 +69,7 @@ const camera = new THREE.PerspectiveCamera(34, innerWidth/innerHeight, .1, 100);
 camera.position.set(0,2.25,8.8);
 camera.lookAt(0,1.25,0);
 
-const renderer = new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'});
+const renderer = new THREE.WebGLRenderer({antialias:true,alpha:new URLSearchParams(location.search).get('journeyEmbed')==='1',powerPreference:'high-performance'});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.shadowMap.enabled=true;
