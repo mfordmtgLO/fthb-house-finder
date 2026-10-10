@@ -46,12 +46,30 @@ export const ListingMap: React.FC<ListingMapProps> = ({
   const routeLayerRef = useRef<L.Polyline | null>(null);
   const routeCursorRef = useRef<L.CircleMarker | null>(null);
   const routeAbortRef = useRef<AbortController | null>(null);
+  const playbackFrameRef = useRef<number | null>(null);
+  const playbackProgressRef = useRef(0);
+  const playbackLastRef = useRef<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [geoReady, setGeoReady] = useState(false);
+  const geoFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const [geoState, setGeoState] = useState<'idle' | 'thinking' | 'point' | 'drive' | 'saturday' | 'arrive' | 'celebrate'>('idle');
+  const [routeProvider] = useState<'preview'>('preview');
   const tourStops = favorites.map(id => listings.find(item => item.id === id)).filter((item): item is CuratedListing => Boolean(item)).slice(0, 4);
   const activeJourneyStops = journeyMode === 'tour' ? tourStops : (tourStops.length ? [tourStops[0]] : []);
   const routeStopPositions: [number, number][] = activeJourneyStops.map(item => [item.latitude, item.longitude]);
   if (journeyMode === 'commute' && commutePoint) routeStopPositions.push(commutePoint);
 
+  const stopPlayback = () => {
+    if (playbackFrameRef.current !== null) cancelAnimationFrame(playbackFrameRef.current);
+    playbackFrameRef.current = null;
+    playbackLastRef.current = null;
+    setIsPlaying(false);
+  };
   const clearJourney = () => {
+    stopPlayback();
+    playbackProgressRef.current = 0;
+    setGeoState('idle');
     routeAbortRef.current?.abort();
     const map = mapInstanceRef.current;
     if (map && routeLayerRef.current) map.removeLayer(routeLayerRef.current);
@@ -77,6 +95,8 @@ export const ListingMap: React.FC<ListingMapProps> = ({
     routeAbortRef.current?.abort();
     const controller = new AbortController();
     routeAbortRef.current = controller;
+    stopPlayback();
+    setGeoState('thinking');
     setJourneyStatus('loading');
     setJourneyError('');
     // OSRM public demo service is used for preview only. Production requires an approved routing provider.
@@ -97,9 +117,11 @@ export const ListingMap: React.FC<ListingMapProps> = ({
       setJourneyCoords(points);
       setJourneyStop(0);
       setJourneyStatus('ready');
+      setGeoState('point');
     } catch (error) {
       if (controller.signal.aborted) return;
       setJourneyStatus('error');
+      setGeoState('idle');
       setJourneyError(error instanceof Error ? error.message : 'Unable to plan route');
     }
   };
@@ -109,8 +131,53 @@ export const ListingMap: React.FC<ListingMapProps> = ({
     const index = Math.min(journeyCoords.length - 1, Math.round(fraction * (journeyCoords.length - 1)));
     const position = journeyCoords[index];
     routeCursorRef.current?.setLatLng(position);
-    if (journeyView === 'drive') map.flyTo(position, Math.max(map.getZoom(), 16), { duration: 0.5 });
+    if (journeyView === 'drive') map.panTo(position, { animate: false });
   };
+  // A fixed-duration preview follows the actual route geometry. It is not real-time
+  // driving/navigation and makes no ETA claims.
+  useEffect(() => {
+    if (!isPlaying || journeyStatus !== 'ready' || journeyCoords.length < 2 || !journeyOpen) return;
+    setGeoState(journeyMode === 'tour' ? 'saturday' : 'drive');
+    const tick = (now: number) => {
+      const previous = playbackLastRef.current;
+      playbackLastRef.current = now;
+      if (previous !== null) {
+        const next = Math.min(100, playbackProgressRef.current + (now - previous) / 1000 * (100 / 75) * playbackSpeed);
+        playbackProgressRef.current = next;
+        setJourneyStop(next);
+        moveJourneyCursor(next / 100);
+        if (next >= 100) {
+          setIsPlaying(false);
+          setGeoState('arrive');
+          playbackFrameRef.current = null;
+          playbackLastRef.current = null;
+          return;
+        }
+      }
+      playbackFrameRef.current = requestAnimationFrame(tick);
+    };
+    playbackFrameRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (playbackFrameRef.current !== null) cancelAnimationFrame(playbackFrameRef.current);
+      playbackFrameRef.current = null;
+      playbackLastRef.current = null;
+    };
+  }, [isPlaying, journeyStatus, journeyCoords, journeyOpen, journeyMode, journeyView, playbackSpeed]);
+
+  // Synchronize the real procedural 3D Geo rig's expressions and pin color with
+  // the journey controls. Same-origin iframe messages only.
+  useEffect(() => {
+    if (!geoReady) return;
+    geoFrameRef.current?.contentWindow?.postMessage({ type: 'geo-journey-state', state: geoState }, window.location.origin);
+  }, [geoState, geoReady]);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (event.origin === window.location.origin && event.source === geoFrameRef.current?.contentWindow && event.data?.type === 'geo-journey-ready') setGeoReady(true);
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, []);
+
   // The journey's Street and Earth modes open real external viewers, not fake street imagery.
   const openJourneyExternal = (kind: 'street' | 'earth') => {
     const position = routeCursorRef.current?.getLatLng() ?? mapInstanceRef.current?.getCenter();
@@ -312,7 +379,10 @@ export const ListingMap: React.FC<ListingMapProps> = ({
   }, [journeyOpen, journeyMode, journeyStatus]);
 
   // Remove transient route layers when the map unmounts.
-  useEffect(() => () => { routeAbortRef.current?.abort(); }, []);
+  useEffect(() => () => {
+    routeAbortRef.current?.abort();
+    if (playbackFrameRef.current !== null) cancelAnimationFrame(playbackFrameRef.current);
+  }, []);
 
   // Update Markers
   useEffect(() => {
@@ -503,15 +573,26 @@ export const ListingMap: React.FC<ListingMapProps> = ({
             <>
               <div className="grid grid-cols-4 gap-1 text-[10px]">
                 {(['map','drive','street','earth'] as const).map(view => (
-                  <button key={view} aria-pressed={journeyView === view} onClick={() => { setJourneyView(view); if (view === 'street' || view === 'earth') openJourneyExternal(view); }} className={`rounded-lg p-2 capitalize ${journeyView === view ? 'bg-cyan-600' : 'bg-slate-700'}`}>{view === 'drive' ? 'Follow' : view === 'earth' ? '3D Earth ↗' : view === 'street' ? 'Street ↗' : 'Map'}</button>
+                  <button key={view} aria-pressed={journeyView === view} onClick={() => { setJourneyView(view); if (view === 'street' || view === 'earth') { stopPlayback(); setGeoState('point'); openJourneyExternal(view); } }} className={`rounded-lg p-2 capitalize ${journeyView === view ? 'bg-cyan-600' : 'bg-slate-700'}`}>{view === 'drive' ? 'Follow' : view === 'earth' ? '3D Earth ↗' : view === 'street' ? 'Street ↗' : 'Map'}</button>
                 ))}
               </div>
-              <label className="block text-xs text-slate-200">Preview route position
-                <input aria-label="Preview position along route" className="w-full mt-2 accent-cyan-500" type="range" min="0" max="100" value={journeyStop} onChange={e => { const n = Number(e.target.value); setJourneyStop(n); moveJourneyCursor(n / 100); }} />
+              <div className="flex items-center gap-2">
+                <button onClick={() => { if (journeyStop >= 100) { playbackProgressRef.current = 0; setJourneyStop(0); moveJourneyCursor(0); } setIsPlaying(!isPlaying); }} className="flex-1 rounded-lg bg-cyan-600 p-2 text-xs font-bold">{isPlaying ? 'Pause' : journeyStop >= 100 ? 'Replay' : 'Play route'}</button>
+                <button onClick={() => { stopPlayback(); playbackProgressRef.current = 0; setJourneyStop(0); moveJourneyCursor(0); setGeoState('idle'); }} className="rounded-lg bg-slate-700 p-2 text-xs">Restart</button>
+                <select aria-label="Preview playback speed" value={playbackSpeed} onChange={e => setPlaybackSpeed(Number(e.target.value))} className="rounded-lg bg-slate-700 p-2 text-xs">
+                  <option value={0.5}>0.5×</option><option value={1}>1×</option><option value={2}>2×</option>
+                </select>
+              </div>
+              <label className="block text-xs text-slate-200">Preview route position: {Math.round(journeyStop)}%
+                <input aria-label="Preview position along route" className="w-full mt-2 accent-cyan-500" type="range" min="0" max="100" value={journeyStop} onChange={e => { stopPlayback(); const n = Number(e.target.value); playbackProgressRef.current = n; setJourneyStop(n); moveJourneyCursor(n / 100); setGeoState(n >= 100 ? 'arrive' : 'point'); }} />
               </label>
-              <p className="text-[10px] text-slate-400">Follow mode moves the map camera along the road. It is not street-level imagery or an animated Geo character. Street and 3D Earth open external viewers at the selected position.</p>
+              <p className="text-[10px] text-slate-400">Follow mode pans the overhead map. Geo's 3D preview reacts to journey state but his lab car uses a separate demonstration animation, not the real street route. Street and 3D Earth open external viewers.</p>
             </>
           )}
+          <div className="relative h-40 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+            <iframe ref={geoFrameRef} onLoad={() => { setGeoReady(false); }} title="Live 3D Geo journey guide preview" src="/geo-creation-lab-v2.html?journeyEmbed=1" sandbox="allow-scripts allow-same-origin" className="h-full w-full border-0" />
+            <span className="pointer-events-none absolute bottom-1 left-2 rounded bg-slate-950/75 px-2 py-1 text-[10px] text-white">Geo 3D · {geoState} · procedural preview</span>
+          </div>
           <button onClick={clearJourney} className="text-xs text-slate-300 underline">Clear route</button>
           <p className="text-[10px] text-slate-400">Preview routing uses OSRM's public demonstration server; do not use for production navigation or guaranteed drive times.</p>
         </div>
