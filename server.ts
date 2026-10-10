@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { queryCuratedListings, type CuratedListing } from './src/server/curatedData.ts';
 import { getPairingDetails } from './src/server/agentPairings.ts';
 import { getAdminFirestore, safeFirestoreWrite } from './src/server/firebaseAdmin.ts';
+import { recordIntakeTcpaConsent, validateAndFormatE164 } from './src/server/tcpaConsent.ts';
 import {
   requireBuyerSession,
   requireStaffRole,
@@ -141,6 +142,57 @@ function requirePluginOperational(req: Request, res: Response, next: NextFunctio
 // -----------------------------------------------------------------------------
 // API Endpoints
 // -----------------------------------------------------------------------------
+
+// Geo Journey route proxy. Keep routing credentials off the buyer's device.
+// A managed OSRM-compatible HTTPS endpoint is required for production.
+// The public demo can be enabled only for explicit non-production preview testing.
+app.post('/api/journey/route', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
+  const raw = req.body?.points;
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 5 ||
+      !raw.every((p: unknown) => Array.isArray(p) && p.length === 2 &&
+        p.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)) &&
+        p[0] >= 41 && p[0] <= 47 && p[1] >= -125 && p[1] <= -116)) {
+    res.status(400).json({ error: 'Provide 2–5 valid Oregon-area [latitude, longitude] coordinates.' });
+    return;
+  }
+  const points = raw as [number, number][];
+  const configured = (process.env.JOURNEY_ROUTING_BASE_URL || '').trim();
+  const preview = process.env.VERCEL_ENV === 'preview' || process.env.NODE_ENV !== 'production';
+  const allowDemo = preview && process.env.JOURNEY_ALLOW_DEMO_ROUTING === 'true';
+  const base = configured || (allowDemo ? 'https://router.project-osrm.org' : '');
+  if (!base) {
+    res.status(503).json({ error: 'Routing is not configured. An approved routing provider is required.' });
+    return;
+  }
+  let parsed: URL;
+  try { parsed = new URL(base); } catch {
+    res.status(503).json({ error: 'Routing provider configuration is invalid.' });
+    return;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    res.status(503).json({ error: 'Routing provider must use a clean HTTPS base URL.' });
+    return;
+  }
+  const coords = points.map(([lat, lon]) => `${lon},${lat}`).join(';');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const endpoint = new URL(`/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`, parsed.origin);
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (process.env.JOURNEY_ROUTING_API_KEY) headers.Authorization = `Bearer ${process.env.JOURNEY_ROUTING_API_KEY}`;
+    const response = await fetch(endpoint, { headers, signal: controller.signal });
+    if (!response.ok) throw new Error('Routing provider returned an error');
+    const result = await response.json();
+    const route = result.routes?.[0];
+    if (result.code !== 'Ok' || !Array.isArray(route?.geometry?.coordinates) || route.geometry.coordinates.length > 20000) {
+      throw new Error('No valid drivable route was returned');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ coordinates: route.geometry.coordinates, provider: configured ? 'configured' : 'demo-preview', previewOnly: !configured });
+  } catch {
+    res.status(502).json({ error: 'Route unavailable. Try again later.' });
+  } finally { clearTimeout(timeout); }
+});
 
 // Get Co-Branded Pairing Details
 app.get('/api/pairing/:pairingId', async (req: Request, res: Response): Promise<void> => {
@@ -297,63 +349,92 @@ app.get('/api/plugin/status', async (_req: Request, res: Response): Promise<void
   });
 });
 
-// 1c-2. Plugin Intake Lead Submission Endpoint
+// 1c-2. Buyer intake: the checkbox is optional, and a submitted boolean is
+// NEVER treated as durable TCPA consent. The transactional consent ledger
+// alone authorizes consent-dependent actions. SMS transport remains dormant.
 app.post('/api/plugin/intake-lead', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
-  const { leadId, name, email, phone, intakeAnswers, smsConsentAuthorized, smsConsentTimestamp, pairingId, campaignTag } = req.body;
-  if (!name || !email || !phone) {
-    res.status(400).json({ error: 'Name, email, and phone required' });
+  const ip = getClientIp(req);
+  if (!rateLimitLeads(ip).allowed) {
+    res.status(429).json({ code: 'INTAKE_RATE_LIMITED', error: 'Please try again later.' });
     return;
   }
-
-  const safeName = sanitizePiiInput(name);
-  const normalizedEmail = email.toLowerCase().trim();
-  const safePhone = sanitizePiiInput(phone);
+  const { leadId, name, email, phone, intakeAnswers, smsConsentAuthorized, pairingId, campaignTag } = req.body || {};
+  if (typeof name !== 'string' || !name.trim() || name.length > 120 ||
+      typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 ||
+      typeof phone !== 'string' || !validateAndFormatE164(phone) ||
+      (leadId !== undefined && (typeof leadId !== 'string' || !/^[a-zA-Z0-9_-]{6,120}$/.test(leadId)))) {
+    res.status(400).json({ code: 'INVALID_INTAKE', error: 'Valid name, email, phone and lead ID required.' });
+    return;
+  }
+  if (smsConsentAuthorized !== undefined && typeof smsConsentAuthorized !== 'boolean') {
+    res.status(400).json({ code: 'INVALID_CONSENT_FLAG', error: 'Invalid consent selection.' });
+    return;
+  }
 
   const db = getAdminFirestore();
   if (!db) {
-    res.status(503).json({ error: 'Firestore service unavailable', code: 'FIRESTORE_UNAVAILABLE' });
+    res.status(503).json({ code: 'FIRESTORE_UNAVAILABLE', error: 'Intake storage unavailable.' });
     return;
   }
 
+  // For consent, never silently substitute the site owner for an absent LO.
+  // An explicit verified pairing is required before the checkbox can be used.
+  const pairing = typeof pairingId === 'string' && pairingId.length > 0
+    ? await getPairingDetails(pairingId) : null;
+  if (smsConsentAuthorized === true && !pairing) {
+    res.status(409).json({ code: 'VERIFIED_PAIRING_REQUIRED',
+      error: 'Text-message consent is unavailable until a verified loan officer is assigned. Uncheck SMS consent to continue.' });
+    return;
+  }
+
+  const targetLeadId = leadId || `lead-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const safeName = sanitizePiiInput(name.trim());
+  const normalizedEmail = email.toLowerCase().trim();
+  const safePhone = validateAndFormatE164(phone)!;
+  const leadRecord = {
+    leadId: targetLeadId, name: safeName, email: normalizedEmail, phone: safePhone,
+    intakeAnswers: intakeAnswers && typeof intakeAnswers === 'object' && !Array.isArray(intakeAnswers)
+      ? intakeAnswers : {},
+    // Never persist the browser's unverified consent assertion as a grant.
+    smsConsentAuthorized: false,
+    smsConsentTimestamp: null,
+    pairingId: pairing?.id || null,
+    assignedLoNmlsId: pairing?.lo.nmlsId || null,
+    campaignTag: typeof campaignTag === 'string' ? campaignTag.slice(0, 100) : '',
+    createdAt: new Date().toISOString(), source: 'plugin-chatbot'
+  };
+
   try {
-    const targetLeadId = leadId || `lead-${Date.now()}`;
-    const leadRecord = {
-      leadId: targetLeadId,
-      name: safeName,
-      email: normalizedEmail,
-      phone: safePhone,
-      intakeAnswers: intakeAnswers || {},
-      smsConsentAuthorized: Boolean(smsConsentAuthorized),
-      smsConsentTimestamp: smsConsentAuthorized ? (smsConsentTimestamp || new Date().toISOString()) : null,
-      pairingId: pairingId || null,
-      campaignTag: campaignTag || '',
-      createdAt: new Date().toISOString(),
-      source: 'plugin-chatbot'
-    };
+    // Await durable writes. A failed write must never return intake success.
+    const batch = db.batch();
+    batch.set(db.collection('plugin_leads').doc(targetLeadId), leadRecord, { merge: true });
+    batch.set(db.collection('leads').doc(targetLeadId), leadRecord, { merge: true });
+    await batch.commit();
 
-    await safeFirestoreWrite(db.collection('plugin_leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
-    await safeFirestoreWrite(db.collection('leads').doc(targetLeadId).set(leadRecord, { merge: true }), 2000);
-
-    if (intakeAnswers?.sampleHomesWanted && intakeAnswers?.location) {
-      await safeFirestoreWrite(db.collection('lead_curations').doc(targetLeadId).set({
-        leadId: targetLeadId,
-        status: 'requested',
-        city: intakeAnswers.location,
-        requestedAt: new Date().toISOString()
-      }, { merge: true }), 2000);
+    if (smsConsentAuthorized === true) {
+      // Server timestamp/version/IP and grant audit are produced by the
+      // verified consent service, not trusted from client-supplied timestamps.
+      await recordIntakeTcpaConsent({
+        leadId: targetLeadId, rawPhone: safePhone,
+        explicitlyChecked: true, ipAddress: ip
+      });
     }
 
+    // Lead intake is independent of optional SMS consent.
     recordAuditLedger({
-      leadId: targetLeadId,
-      actionType: 'PLUGIN_INTAKE_SUBMITTED',
-      ipAddress: getClientIp(req),
-      redactedPayload: { name: safeName, email: normalizedEmail, smsConsent: Boolean(smsConsentAuthorized) }
+      leadId: targetLeadId, actionType: 'PLUGIN_INTAKE_SUBMITTED',
+      ipAddress: ip, redactedPayload: { smsConsentRequested: smsConsentAuthorized === true }
     });
-
-    res.json({ success: true, leadId: targetLeadId });
+    res.json({
+      success: true, leadId: targetLeadId,
+      smsConsentRecorded: smsConsentAuthorized === true
+    });
   } catch (err: any) {
-    console.error('[Plugin Intake Error]', err.message);
-    res.status(500).json({ error: 'Intake submission failed' });
+    console.error('[Plugin Intake Error]', err?.message);
+    res.status(503).json({
+      code: 'INTAKE_PERSISTENCE_UNCONFIRMED',
+      error: 'Your submission could not be confirmed. Please try again or contact your assigned loan officer.'
+    });
   }
 });
 
@@ -879,7 +960,24 @@ app.post('/api/mike/reply', requireStaffRole('master_admin', 'admin', 'loan_offi
 
   let resultMsg: any;
   if (propertyId) {
-    resultMsg = await addMikePropertyReply(propertyId, leadId, text);
+    try {
+      resultMsg = await addMikePropertyReply(propertyId, leadId, text, staff.email);
+    } catch (err: any) {
+      const code = String(err?.message || '');
+      if (code === 'PROPERTY_NOTE_BUYER_MUST_INITIATE' ||
+          code === 'PROPERTY_NOTE_ASSIGNED_LO_ONLY') {
+        await recordStaffAudit({
+          actor: staff.email, role: staff.role, action: 'STAFF_REPLY',
+          targetLeadId: leadId, outcome: 'DENIED',
+          metadata: { propertyId, reason: code }
+        });
+        res.status(403).json({ code, error: code === 'PROPERTY_NOTE_BUYER_MUST_INITIATE'
+          ? 'The buyer must post the first property card note before the assigned loan officer can reply.'
+          : 'Only the verified assigned loan officer may reply to this property card.' });
+        return;
+      }
+      throw err;
+    }
   } else {
     resultMsg = await handleMikeReply(leadId, text);
   }

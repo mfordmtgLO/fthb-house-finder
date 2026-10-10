@@ -11,62 +11,144 @@
  *    credentials or the plugin's own project.
  */
 
-import { initializeApp, getApps, cert, type App } from 'firebase-admin/app';
+import { initializeApp, getApps, cert, applicationDefault, type App } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
-const HOMEBUYER_DATABASE_ID = 'ai-studio-vantageaiworkspa-320759cc-ded2-4188-b4e0-ed887f4ad5bd';
+const PRODUCTION_DATABASE_ID = 'ai-studio-vantageaiworkspa-320759cc-ded2-4188-b4e0-ed887f4ad5bd';
+const STAGING_PROJECT_ID = 'astral-web-439103-g7';
+const STAGING_DATABASE_ID = 'fthb-geo-staging';
 const APP_NAME = 'homebuyer-project';
+const EMULATOR_PROJECT_ID = 'demo-geo-staging';
 
 let adminApp: App | null = null;
 let firestoreDb: Firestore | null = null;
 
-export function getAdminFirestore(): Firestore | null {
-  if (firestoreDb) {
-    return firestoreDb;
+/**
+ * Target is explicit and immutable for this process. In staging, credentials
+ * MUST belong to the exact staging project and the exact named database.
+ * Production behavior remains the legacy named database until a separately
+ * approved migration; never infer staging from NODE_ENV.
+ */
+export function resolveFirestoreTarget(env: NodeJS.ProcessEnv = process.env):
+  { projectId: string | null; databaseId: string; target: 'staging' | 'production' | 'emulator' } {
+  const target = env.GEO_FIRESTORE_TARGET;
+  if (target === 'emulator') {
+    if (env.NODE_ENV === 'production' ||
+        env.GOOGLE_CLOUD_PROJECT !== EMULATOR_PROJECT_ID ||
+        env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080' ||
+        env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      throw new Error('GEO_EMULATOR_CONFIGURATION_REJECTED');
+    }
+    return { projectId: EMULATOR_PROJECT_ID, databaseId: STAGING_DATABASE_ID, target: 'emulator' };
   }
+  if (target === 'staging') {
+    if (env.GEO_FIRESTORE_PROJECT_ID !== STAGING_PROJECT_ID ||
+        env.GEO_FIRESTORE_DATABASE_ID !== STAGING_DATABASE_ID) {
+      throw new Error('STAGING_FIRESTORE_TARGET_MISMATCH');
+    }
+    if (env.NODE_ENV === 'production' && env.GEO_ALLOW_STAGING_IN_PRODUCTION !== 'true') {
+      throw new Error('STAGING_TARGET_BLOCKED_IN_PRODUCTION_RUNTIME');
+    }
+    return { projectId: STAGING_PROJECT_ID, databaseId: STAGING_DATABASE_ID, target: 'staging' };
+  }
+  if (target && target !== 'production') throw new Error('INVALID_FIRESTORE_TARGET');
+  // The production project's actual ID is checked against a configured
+  // expected ID if supplied; we do not infer it from the named database ID.
+  return { projectId: env.GEO_PRODUCTION_PROJECT_ID || null,
+    databaseId: PRODUCTION_DATABASE_ID, target: 'production' };
+}
 
-  // Fail closed if the environment secret is missing
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (!serviceAccountJson || !serviceAccountJson.trim()) {
-    console.error(
-      '[Firebase Admin] FATAL: FIREBASE_SERVICE_ACCOUNT_JSON environment variable is missing. ' +
-      'Failing closed — will NOT fall back to default credentials or plugin project.'
-    );
+export function getAdminFirestore(): Firestore | null {
+  if (firestoreDb) return firestoreDb;
+  let target: ReturnType<typeof resolveFirestoreTarget>;
+  try {
+    target = resolveFirestoreTarget();
+  } catch (err: any) {
+    console.error('[Firebase Admin] Refusing unsafe Firestore target:', err.message);
     return null;
   }
 
+  if (target.target === 'emulator') {
+    try {
+      const existing = getApps().find(a => a.name === APP_NAME);
+      adminApp = existing || initializeApp({ projectId: EMULATOR_PROJECT_ID }, APP_NAME);
+      if (adminApp.options.projectId !== EMULATOR_PROJECT_ID) throw new Error('EMULATOR_PROJECT_MISMATCH');
+      firestoreDb = getFirestore(adminApp, STAGING_DATABASE_ID);
+      firestoreDb.settings({ ignoreUndefinedProperties: true });
+      return firestoreDb;
+    } catch (err: any) {
+      console.error('[Firebase Admin] Emulator initialization refused:', err.message);
+      return null;
+    }
+  }
+  // Keyless cloud validation is explicitly opt-in, staging-only, and bound to
+  // the fixed project and named database above. The caller must authenticate
+  // ADC by impersonating the restricted Geo Staging Validator service account.
+  // IAM (not this flag) enforces the actual database access boundary.
+  if (process.env.GEO_STAGING_USE_ADC === 'true') {
+    try {
+      if (target.target !== 'staging' ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+          process.env.GEO_FIRESTORE_PROJECT_ID !== STAGING_PROJECT_ID ||
+          process.env.GEO_FIRESTORE_DATABASE_ID !== STAGING_DATABASE_ID ||
+          process.env.GOOGLE_CLOUD_PROJECT !== STAGING_PROJECT_ID ||
+          process.env.GEO_STAGING_VALIDATOR_EMAIL !==
+            'geo-staging-validator@astral-web-439103-g7.iam.gserviceaccount.com') {
+        throw new Error('STAGING_ADC_CONFIGURATION_REJECTED');
+      }
+      const existing = getApps().find(a => a.name === APP_NAME);
+      if (existing) throw new Error('STAGING_ADC_APP_ALREADY_INITIALIZED');
+      adminApp = initializeApp({
+        credential: applicationDefault(),
+        projectId: STAGING_PROJECT_ID
+      }, APP_NAME);
+      firestoreDb = getFirestore(adminApp, STAGING_DATABASE_ID);
+      firestoreDb.settings({ ignoreUndefinedProperties: true });
+      return firestoreDb;
+    } catch (err: any) {
+      console.error('[Firebase Admin] Staging ADC refused:', err.message);
+      return null;
+    }
+  }
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!serviceAccountJson || !serviceAccountJson.trim()) {
+    console.error('[Firebase Admin] Missing FIREBASE_SERVICE_ACCOUNT_JSON; failing closed.');
+    return null;
+  }
   let serviceAccount: any;
   try {
     serviceAccount = JSON.parse(serviceAccountJson);
+    if (!serviceAccount.project_id || !serviceAccount.private_key || !serviceAccount.client_email) {
+      throw new Error('INCOMPLETE_FIREBASE_SERVICE_ACCOUNT');
+    }
+    if (target.projectId && serviceAccount.project_id !== target.projectId) {
+      throw new Error('FIREBASE_CREDENTIAL_PROJECT_MISMATCH');
+    }
   } catch (err: any) {
-    console.error(
-      '[Firebase Admin] FATAL: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON. Failing closed:',
-      err.message
-    );
+    console.error('[Firebase Admin] Refusing Firebase credentials:', err.message);
     return null;
   }
 
   try {
-    const existingApps = getApps();
-    const existingApp = existingApps.find(a => a.name === APP_NAME);
-
-    if (!existingApp) {
-      adminApp = initializeApp({
-        credential: cert(serviceAccount)
-      }, APP_NAME);
-    } else {
+    const existingApp = getApps().find(a => a.name === APP_NAME);
+    if (existingApp) {
+      // Do not reuse an already initialized Firebase app from another target.
+      if (existingApp.options.projectId !== serviceAccount.project_id) {
+        throw new Error('FIREBASE_APP_PROJECT_MISMATCH');
+      }
       adminApp = existingApp;
+    } else {
+      adminApp = initializeApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id
+      }, APP_NAME);
     }
-
-    // Connect strictly to the named database in the homebuyer project
-    firestoreDb = getFirestore(adminApp, HOMEBUYER_DATABASE_ID);
+    firestoreDb = getFirestore(adminApp, target.databaseId);
     firestoreDb.settings({ ignoreUndefinedProperties: true });
-    console.log(
-      `[Firebase Admin] Successfully initialized Firestore connection to homebuyer project (${serviceAccount.project_id}), database ID: ${HOMEBUYER_DATABASE_ID}`
-    );
+    console.log(`[Firebase Admin] Connected to ${target.target} Firestore database ${target.databaseId} in project ${serviceAccount.project_id}`);
     return firestoreDb;
   } catch (err: any) {
-    console.error('[Firebase Admin] Error initializing homebuyer project Firestore:', err.message);
+    console.error('[Firebase Admin] Firestore initialization failed:', err.message);
     return null;
   }
 }

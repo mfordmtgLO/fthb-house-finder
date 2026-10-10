@@ -237,11 +237,6 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
       setValidationError('Please enter a valid 10-digit US phone number.');
       return;
     }
-    if (!smsConsent) {
-      setValidationError('Please check the TCPA SMS consent box to receive your pre-qualification blueprint.');
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       const blueprint = generateBlueprint();
@@ -264,7 +259,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
           sampleHomesWanted: Boolean(sampleHomesWanted)
         },
         smsConsentAuthorized: smsConsent,
-        smsConsentTimestamp: new Date().toISOString(),
+
         pairingId: pairing?.id || null,
         campaignTag: pairing?.campaignTag || '',
         blueprintGenerated: blueprint,
@@ -1005,7 +1000,7 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                       </div>
                     </div>
 
-                    {/* TCPA Mandatory SMS Consent Checkbox */}
+                    {/* Optional TCPA SMS consent — never required to view the blueprint */}
                     <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl">
                       <label className="flex items-start space-x-2.5 cursor-pointer">
                         <input
@@ -1015,10 +1010,10 @@ export const LeadIntakeChatbot: React.FC<LeadIntakeChatbotProps> = ({
                           className="mt-0.5 rounded accent-emerald-500 w-4 h-4 shrink-0 cursor-pointer"
                         />
                         <span className="text-[10px] text-slate-300 leading-relaxed">
-                          I agree to receive automated SMS updates, home listing alerts, and
-                          pre-approval status notifications from the Loan Officer &amp; Realtor team
-                          at the number provided. Msg &amp; data rates may apply. Reply STOP to
-                          cancel.
+                          Optional: I agree to receive text messages from my verified assigned loan officer
+                          and paired agent about properties and my homebuying journey.
+                          Message and data rates may apply. Reply STOP to opt out at any time.
+                          Consent is not a condition of purchase.
                         </span>
                       </label>
                     </div>

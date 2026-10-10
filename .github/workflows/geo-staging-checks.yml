@@ -1,0 +1,67 @@
+name: Geo Staging Code Checks
+on:
+  push:
+    branches:
+      - feature/geo-creation-3d-preview
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # No Firebase service credentials. This job must never reach live data.
+      GEO_FIRESTORE_TARGET: staging
+      GEO_FIRESTORE_PROJECT_ID: astral-web-439103-g7
+      GEO_FIRESTORE_DATABASE_ID: fthb-geo-staging
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+        # Temporary until package-lock.json is regenerated and committed.
+        # npm ci correctly identified a pre-existing lockfile mismatch.
+      - name: TypeScript validation
+        run: npm run lint
+      - name: Geo safety unit tests
+        run: npx tsx --test src/server/geoScriptedCommands.test.ts src/server/tcpaConsent.test.ts src/server/firebaseAdmin.test.ts
+      - name: Frontend build
+        run: npm run build
+
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      GEO_FIRESTORE_TARGET: emulator
+      GOOGLE_CLOUD_PROJECT: demo-geo-staging
+      FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Java for Firestore emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Test Firestore with fake project and named database
+        run: npx --yes firebase-tools@14 emulators:exec --only firestore --project demo-geo-staging --config firebase.staging.json "npx tsx --test src/server/geoFirestoreEmulator.test.ts"
