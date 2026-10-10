@@ -579,7 +579,7 @@ export const ListingMap: React.FC<ListingMapProps> = ({
                 ))}
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => { if (journeyStop >= 100) { playbackProgressRef.current = 0; setJourneyStop(0); moveJourneyCursor(0); } setIsPlaying(!isPlaying); }} className="flex-1 rounded-lg bg-cyan-600 p-2 text-xs font-bold">{isPlaying ? 'Pause' : journeyStop >= 100 ? 'Replay' : 'Play route'}</button>
+                <button onClick={() => { if (journeyStop >= 100) { playbackProgressRef.current = 0; setJourneyStop(0); moveJourneyCursor(0); } setIsPlaying(!isPlaying); if (isPlaying) setGeoState('point'); }} className="flex-1 rounded-lg bg-cyan-600 p-2 text-xs font-bold">{isPlaying ? 'Pause' : journeyStop >= 100 ? 'Replay' : 'Play route'}</button>
                 <button onClick={() => { stopPlayback(); playbackProgressRef.current = 0; setJourneyStop(0); moveJourneyCursor(0); setGeoState('idle'); }} className="rounded-lg bg-slate-700 p-2 text-xs">Restart</button>
                 <select aria-label="Preview playback speed" value={playbackSpeed} onChange={e => setPlaybackSpeed(Number(e.target.value))} className="rounded-lg bg-slate-700 p-2 text-xs">
                   <option value={0.5}>0.5×</option><option value={1}>1×</option><option value={2}>2×</option>
