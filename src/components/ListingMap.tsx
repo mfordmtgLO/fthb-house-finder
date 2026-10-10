@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { Maximize2, Minimize2, List, Layers, MapPin, Home } from 'lucide-react';
+import { Maximize2, Minimize2, List, Layers, MapPin } from 'lucide-react';
 import { CuratedListing } from '../types';
 import { OREGON_LMI_TRACTS } from '../data/oregonLmiTracts';
 
@@ -369,24 +369,11 @@ export const ListingMap: React.FC<ListingMapProps> = ({
       {/* Map Canvas */}
       <div ref={mapContainerRef} className="w-full h-full bg-slate-950" />
 
-      {/* Honest Empty State Overlay when Firestore curated_listings is empty */}
+      {/* Keep map navigation and census overlays usable even when there are no curated homes. */}
       {listings.length === 0 && (
-        <div className="absolute inset-0 z-[999] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm pointer-events-auto p-4">
-          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center shadow-2xl space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-slate-400">
-              <Home className="w-6 h-6 text-cyan-400" />
-            </div>
-            <h3 className="text-sm font-bold text-white">No Curated Listings in Database</h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Curated single-family homes are sourced directly from the shared Firestore database. No listings currently exist in the database or match active filters.
-            </p>
-            <button
-              onClick={onBackToList}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-xl shadow-md transition-all"
-            >
-              Back to Homes Platter
-            </button>
-          </div>
+        <div className="absolute bottom-3 left-3 z-[999] max-w-xs rounded-xl border border-slate-700 bg-slate-900/90 p-3 text-white shadow-xl pointer-events-none">
+          <div className="text-xs font-bold">No curated homes to display</div>
+          <p className="text-[11px] text-slate-300 mt-1">Explore the map and census tract overlays while your authorized listings are unavailable or filtered out.</p>
         </div>
       )}
 
