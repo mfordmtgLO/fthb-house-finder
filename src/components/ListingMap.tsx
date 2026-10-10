@@ -54,7 +54,6 @@ export const ListingMap: React.FC<ListingMapProps> = ({
   const [geoReady, setGeoReady] = useState(false);
   const geoFrameRef = useRef<HTMLIFrameElement | null>(null);
   const [geoState, setGeoState] = useState<'idle' | 'thinking' | 'point' | 'drive' | 'saturday' | 'arrive' | 'celebrate'>('idle');
-  const [routeProvider] = useState<'preview'>('preview');
   const tourStops = favorites.map(id => listings.find(item => item.id === id)).filter((item): item is CuratedListing => Boolean(item)).slice(0, 4);
   const activeJourneyStops = journeyMode === 'tour' ? tourStops : (tourStops.length ? [tourStops[0]] : []);
   const routeStopPositions: [number, number][] = activeJourneyStops.map(item => [item.latitude, item.longitude]);
@@ -590,7 +589,7 @@ export const ListingMap: React.FC<ListingMapProps> = ({
             </>
           )}
           <div className="relative h-40 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
-            <iframe ref={geoFrameRef} onLoad={() => { setGeoReady(false); }} title="Live 3D Geo journey guide preview" src="/geo-creation-lab-v2.html?journeyEmbed=1" sandbox="allow-scripts allow-same-origin" className="h-full w-full border-0" />
+            <iframe ref={geoFrameRef} title="Live 3D Geo journey guide preview" src="/geo-creation-lab-v2.html?journeyEmbed=1" sandbox="allow-scripts allow-same-origin" className="h-full w-full border-0" />
             <span className="pointer-events-none absolute bottom-1 left-2 rounded bg-slate-950/75 px-2 py-1 text-[10px] text-white">Geo 3D · {geoState} · procedural preview</span>
           </div>
           <button onClick={clearJourney} className="text-xs text-slate-300 underline">Clear route</button>
