@@ -532,8 +532,18 @@ app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> 
 });
 
 // 3a. Google Maps Distance Matrix & Routes Commute API Proxy
-// Security: Session-gated to prevent anonymous spend of server quota.
-app.post('/api/commute/matrix', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
+// Security: Protected by rateLimitSensitive (Tier 4) to prevent quota abuse while allowing seamless listing browsing.
+app.post('/api/commute/matrix', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
+  const ip = getClientIp(req);
+  const sensitiveCheck = rateLimitSensitive(ip);
+  if (!sensitiveCheck.allowed) {
+    res.status(429).json({
+      error: 'Rate limit exceeded for commute calculations.',
+      retryAfterSeconds: sensitiveCheck.resetInSec
+    });
+    return;
+  }
+
   const { origins, destination, travelMode = 'DRIVE' } = req.body;
   if (!Array.isArray(origins) || origins.length === 0 || !destination || typeof destination !== 'string') {
     res.status(400).json({ error: 'Missing origins array or destination string' });
