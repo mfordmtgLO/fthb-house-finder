@@ -309,6 +309,29 @@ function burst(){
 }
 
 document.querySelectorAll('button[data-state]').forEach(b=>b.addEventListener('click',()=>setState(b.dataset.state)));
+/* Same-origin Geo Journey bridge: this remains a live procedural Three.js character,
+   never a static image. This is a lab asset, not the final production character rig. */
+const journeyEmbed = new URLSearchParams(location.search).get('journeyEmbed') === '1';
+if (journeyEmbed) {
+  const style = document.createElement('style');
+  style.textContent = '.hud{display:none!important}body,html{background:transparent!important}';
+  document.head.appendChild(style);
+  scene.background = null;
+  scene.fog = null;
+  renderer.setClearColor(0x000000, 0);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  camera.position.set(0, 2.1, 10);
+  camera.lookAt(0, 1.0, 0);
+  window.addEventListener('message', (event) => {
+    if (event.origin !== location.origin || event.source !== window.parent) return;
+    const payload = event.data;
+    if (!payload || payload.type !== 'geo-journey-state') return;
+    const allowed = ['idle', 'thinking', 'point', 'drive', 'saturday', 'arrive', 'celebrate'];
+    if (allowed.includes(payload.state) && payload.state !== state) setState(payload.state);
+  });
+  window.parent.postMessage({type:'geo-journey-ready'}, location.origin);
+}
+
 
 const clock=new THREE.Clock();
 function animate(){
