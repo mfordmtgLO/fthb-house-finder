@@ -312,6 +312,48 @@ document.querySelectorAll('button[data-state]').forEach(b=>b.addEventListener('c
 /* Same-origin Geo Journey bridge: this remains a live procedural Three.js character,
    never a static image. This is a lab asset, not the final production character rig. */
 const journeyEmbed = new URLSearchParams(location.search).get('journeyEmbed') === '1';
+let journeyRoad = null, journeyProgress = 0, journeyPaused = true;
+function applyJourneyRoute(coordinates) {
+  if (!Array.isArray(coordinates) || coordinates.length < 2 || coordinates.length > 20000) return;
+  const valid = coordinates.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
+  if (!valid) return;
+  const origin = coordinates[0];
+  const latScale = 111320;
+  const lonScale = Math.cos(origin[0] * Math.PI / 180) * 111320;
+  const raw = coordinates.map(([lat, lon]) => new THREE.Vector3((lon-origin[1])*lonScale, -.88, -(lat-origin[0])*latScale));
+  let cumulative = [0];
+  for (let i=1;i<raw.length;i++) cumulative.push(cumulative[i-1]+raw[i].distanceTo(raw[i-1]));
+  const total = cumulative[cumulative.length-1];
+  if (total < 1) return;
+  const scaled = raw.map(p => new THREE.Vector3(p.x/total*9, -.88, p.z/total*9));
+  const midpoint = scaled[Math.floor(scaled.length/2)];
+  const centered = scaled.map(p => p.clone().sub(new THREE.Vector3(midpoint.x,0,midpoint.z)));
+  journeyRoad = { points:centered, distances:cumulative.map(v=>v/total) };
+  routeTube.visible = false;
+  stopGroup.visible = false;
+}
+function sampleJourney(progress) {
+  if (!journeyRoad) return null;
+  const t = THREE.MathUtils.clamp(progress,0,1), d=journeyRoad.distances, pts=journeyRoad.points;
+  let lo=0,hi=d.length-1;
+  while(lo<hi){const mid=(lo+hi)>>1;if(d[mid]<t)lo=mid+1;else hi=mid;}
+  const i=Math.max(1,lo), span=d[i]-d[i-1] || 1;
+  const point=pts[i-1].clone().lerp(pts[i],(t-d[i-1])/span);
+  const tangent=pts[i].clone().sub(pts[i-1]).normalize();
+  return {point,tangent};
+}
+function positionJourneyVehicle() {
+  const pose=sampleJourney(journeyProgress);
+  if (!pose) return;
+  car.visible=true;
+  car.position.copy(pose.point);
+  car.rotation.y=Math.atan2(pose.tangent.z,-pose.tangent.x);
+  geo.position.set(pose.point.x,pose.point.y+1.03,pose.point.z);
+  geo.rotation.y=car.rotation.y;
+  geo.rotation.x=-.08;
+  geo.scale.set(.82,.78,.82);
+}
+
 if (journeyEmbed) {
   const style = document.createElement('style');
   style.textContent = '.hud{display:none!important}body,html{background:transparent!important}';
@@ -325,8 +367,12 @@ if (journeyEmbed) {
   window.addEventListener('message', (event) => {
     if (event.origin !== location.origin || event.source !== window.parent) return;
     const payload = event.data;
-    if (!payload || payload.type !== 'geo-journey-state') return;
+    if (!payload) return;
+    if (payload.type === 'geo-journey-route') { applyJourneyRoute(payload.coordinates); journeyProgress=0; return; }
+    if (payload.type === 'geo-journey-progress') { journeyProgress=THREE.MathUtils.clamp(Number(payload.progress)||0,0,1); journeyPaused=!!payload.paused; return; }
+    if (payload.type !== 'geo-journey-state') return;
     const allowed = ['idle', 'thinking', 'point', 'drive', 'saturday', 'arrive', 'celebrate'];
+    if (payload.type === 'geo-journey-route') return;
     if (allowed.includes(payload.state) && payload.state !== state) setState(payload.state);
   });
   window.parent.postMessage({type:'geo-journey-ready'}, location.origin);
@@ -367,7 +413,7 @@ function animate(){
  if(state==='pricedrop'){pin.rotation.z=Math.sin(t*7)*.18;}
  if(state==='newhome'){geo.rotation.y=Math.sin(t*4)*.12;}
  if(state==='top3'||state==='celebrate'){geo.position.y=.2+Math.abs(Math.sin(t*5))* .16;armL.rotation.z=.8;armR.rotation.z=-.8;}
- if(state==='saturday'){
+ if(state==='saturday' && !(journeyEmbed && journeyRoad)){
    // Saturday open-house loop: Geo rides the plotted route through four curated home stops.
    routeT=(routeT+dt*.032)%1;
    const p=routeCurve.getPointAt(routeT),p2=routeCurve.getPointAt(Math.min(routeT+.01,1));
@@ -378,7 +424,7 @@ function animate(){
    geo.rotation.x=-.08+Math.sin(t*7)*.025;
    geo.scale.set(.82,.78,.82);
  }
- if(state==='drive'){
+ if(state==='drive' && !(journeyEmbed && journeyRoad)){
    routeT=(routeT+dt*.055)%1;
    const p=routeCurve.getPointAt(routeT),p2=routeCurve.getPointAt(Math.min(routeT+.01,1));
    car.position.copy(p);car.lookAt(p2);car.rotation.y+=Math.PI/2;
@@ -396,6 +442,7 @@ function animate(){
    geo.rotation.y=Math.sin(t*4)*.15;
    geo.scale.lerp(new THREE.Vector3(1,1,1),.12);
  }
+ if(journeyEmbed && journeyRoad && (state==='drive'||state==='saturday'||state==='arrive')) positionJourneyVehicle();
  animateExtras(t,dt);
  // tiny pin breathing
  pinLight.intensity=2.7+Math.sin(t*5)*.7;
