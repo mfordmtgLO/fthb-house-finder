@@ -98,15 +98,18 @@ export const ListingMap: React.FC<ListingMapProps> = ({
     setGeoState('thinking');
     setJourneyStatus('loading');
     setJourneyError('');
-    // OSRM public demo service is used for preview only. Production requires an approved routing provider.
-    const coordinates = routeStopPositions.map(([lat, lon]) => `${lon},${lat}`).join(';');
+    // Routing is server-configured. Never expose provider credentials or silently
+    // fall back to a public demo service in production.
     try {
-      const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal });
-      if (!response.ok) throw new Error('Routing service unavailable');
+      const response = await fetch('/api/journey/route', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points: routeStopPositions }), signal: controller.signal
+      });
       const data = await response.json();
-      if (data.code !== 'Ok' || !data.routes?.[0]?.geometry?.coordinates?.length) throw new Error('No drivable route found');
+      if (!response.ok) throw new Error(data.error || 'Routing service unavailable');
+      if (!Array.isArray(data.coordinates) || data.coordinates.length < 2) throw new Error('No drivable route found');
       if (controller.signal.aborted) return;
-      const points: [number, number][] = data.routes[0].geometry.coordinates.map(([lon, lat]: [number, number]) => [lat, lon]);
+      const points: [number, number][] = data.coordinates.map(([lon, lat]: [number, number]) => [lat, lon]);
       if (routeLayerRef.current) map.removeLayer(routeLayerRef.current);
       if (routeCursorRef.current) map.removeLayer(routeCursorRef.current);
       const route = L.polyline(points, { color: '#06b6d4', weight: 6, opacity: 0.9 }).addTo(map);
@@ -593,7 +596,7 @@ export const ListingMap: React.FC<ListingMapProps> = ({
             <span className="pointer-events-none absolute bottom-1 left-2 rounded bg-slate-950/75 px-2 py-1 text-[10px] text-white">Geo 3D · {geoState} · procedural preview</span>
           </div>
           <button onClick={clearJourney} className="text-xs text-slate-300 underline">Clear route</button>
-          <p className="text-[10px] text-slate-400">Preview routing uses OSRM's public demonstration server; do not use for production navigation or guaranteed drive times.</p>
+          <p className="text-[10px] text-slate-400">Routes require a configured server-side provider. Public demonstration routing is allowed only when explicitly enabled in a non-production preview. Not turn-by-turn navigation.</p>
         </div>
       )}
 
