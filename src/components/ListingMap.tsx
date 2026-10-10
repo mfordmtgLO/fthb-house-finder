@@ -260,7 +260,7 @@ export const ListingMap: React.FC<ListingMapProps> = ({
       )}
 
       {/* Floating Controls Bar: Left */}
-      <div className="absolute top-3 left-3 z-[1000] flex items-center space-x-1.5">
+      <div className="absolute top-3 left-3 z-[1000] flex flex-wrap items-center gap-1.5">
         <button
           onClick={onBackToList}
           className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-900/90 hover:bg-slate-900 text-white font-medium text-xs border border-slate-700 shadow-xl backdrop-blur-md flex items-center gap-1.5 transition-all"
@@ -269,6 +269,20 @@ export const ListingMap: React.FC<ListingMapProps> = ({
           <span className="hidden sm:inline">Back to Curated Homes List</span>
           <span className="sm:hidden text-[11px]">List</span>
         </button>
+
+        {/* Amenity Icon Chips on Map (parks, schools, transit) */}
+        <div className="hidden md:flex items-center space-x-1 px-2 py-1 rounded-xl bg-slate-900/90 border border-slate-700/80 shadow-xl backdrop-blur-md text-[11px] text-slate-300">
+          <span className="text-[10px] text-slate-400 font-mono pr-1">Amenities:</span>
+          <span className="px-2 py-0.5 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 flex items-center gap-1 cursor-default" title="Neighborhood Parks & Green Spaces">
+            🌳 Parks
+          </span>
+          <span className="px-2 py-0.5 rounded-lg bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 flex items-center gap-1 cursor-default" title="Elementary & High Schools">
+            🏫 Schools
+          </span>
+          <span className="px-2 py-0.5 rounded-lg bg-amber-950/60 border border-amber-500/30 text-amber-300 flex items-center gap-1 cursor-default" title="Local Coffee & MAX/Transit Hubs">
+            ☕ Transit
+          </span>
+        </div>
       </div>
 
       {/* Floating Controls Bar: Right */}

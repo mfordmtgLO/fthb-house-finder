@@ -24,7 +24,10 @@ import { MikeReplySimulatorModal } from './components/MikeReplySimulatorModal';
 import { UsdaIncomeAdjusterModal } from './components/UsdaIncomeAdjusterModal';
 import { IdentifyModal } from './components/IdentifyModal';
 import { GamifiedBuyerJourney } from './components/GamifiedBuyerJourney';
+import { WorkplaceModal } from './components/WorkplaceModal';
+import { GuideDock } from './components/GuideDock';
 import LeadIntakeChatbot from './components/LeadIntakeChatbot';
+import { getStoredWorkplace, setStoredWorkplace } from './services/commuteService';
 import {
   Home,
   ShieldCheck,
@@ -38,7 +41,8 @@ import {
   MapPin,
   Star,
   UserCheck,
-  Mail
+  Mail,
+  Car
 } from 'lucide-react';
 
 export default function App() {
@@ -54,8 +58,14 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // View state: on mobile screens (<1024px), sidebar is closed initially to expose homes & map
-  const [activeView, setActiveView] = useState<'list' | 'map'>('list');
+  // View state: Explore / My Tour / Saved per overhaul shell spec
+  const [activeView, setActiveView] = useState<'explore' | 'my-tour' | 'saved' | 'list' | 'map'>('explore');
+  const [guideLastAction, setGuideLastAction] = useState<{
+    type: 'favorite' | 'top3' | 'price_drop' | 'explore' | 'welcome';
+    timestamp: number;
+    meta?: any;
+  } | null>(null);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return window.innerWidth >= 1024;
@@ -84,6 +94,8 @@ export default function App() {
   const [isUsdaAdjusterOpen, setIsUsdaAdjusterOpen] = useState<boolean>(false);
   const [isIdentifyOpen, setIsIdentifyOpen] = useState<boolean>(false);
   const [isIntakeChatOpen, setIsIntakeChatOpen] = useState<boolean>(false);
+  const [workplaceAddress, setWorkplaceAddress] = useState<string>(() => getStoredWorkplace());
+  const [isWorkplaceModalOpen, setIsWorkplaceModalOpen] = useState<boolean>(false);
 
   // Deep-linking map state
   const [deepLinkedListingId, setDeepLinkedListingId] = useState<string | null>(null);
@@ -210,6 +222,12 @@ export default function App() {
       }
       nextFavorites = [...favorites, id];
       showToast('Added to your Top 3 Favorites!');
+      // Notify Guide Dock
+      if (nextFavorites.length === 3) {
+        setGuideLastAction({ type: 'top3', timestamp: Date.now() });
+      } else {
+        setGuideLastAction({ type: 'favorite', timestamp: Date.now(), meta: { id } });
+      }
     }
 
     setFavorites(nextFavorites);
@@ -322,25 +340,39 @@ export default function App() {
           />
 
           <div className="max-w-7xl mx-auto px-4 py-4 space-y-6">
-            {/* Gamified Readiness Journey */}
-            <GamifiedBuyerJourney
+            {/* Zone 1: Persistent Guide Dock (Pin/Geo companion) */}
+            <GuideDock
               favoritesCount={favorites.length}
-              hasCurations={Boolean(curationsData?.hasCurations && curationsData.listings?.length > 0)}
-              isChatOpen={isSidebarOpen}
+              lastAction={guideLastAction}
+              onOpenGuidebook={() => {
+                const el = document.getElementById('fthb-guidebook-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
               onOpenChat={() => setIsSidebarOpen(true)}
-              onOpenIntake={() => setIsIntakeChatOpen(true)}
-              onOpenBuydown={() => setBuydownListing(listings[0] || null)}
-              onOpenSchedule={() => setPreApprovalListing(listings[0] || null)}
+              isChatOpen={isSidebarOpen}
             />
 
-            {/* View Switch: List vs Map */}
-            {activeView === 'map' ? (
+            {/* Zone 2: Home Guidebook stamps */}
+            <div id="fthb-guidebook-section">
+              <GamifiedBuyerJourney
+                favoritesCount={favorites.length}
+                hasCurations={Boolean(curationsData?.hasCurations && curationsData.listings?.length > 0)}
+                isChatOpen={isSidebarOpen}
+                onOpenChat={() => setIsSidebarOpen(true)}
+                onOpenIntake={() => setIsIntakeChatOpen(true)}
+                onOpenBuydown={() => setBuydownListing(listings[0] || null)}
+                onOpenSchedule={() => setPreApprovalListing(listings[0] || null)}
+              />
+            </div>
+
+            {/* Zone 3: Navigation Views (Explore Carousel vs My Tour Map vs Saved Contenders) */}
+            {(activeView === 'my-tour' || activeView === 'map') ? (
               <ListingMap
                 listings={listings}
                 favorites={favorites}
                 onToggleFavorite={handleToggleFavorite}
                 onOpenNotes={(listing) => setNotesListing(listing)}
-                onBackToList={() => setActiveView('list')}
+                onBackToList={() => setActiveView('explore')}
                 deepLinkedListingId={deepLinkedListingId}
               />
             ) : (
@@ -427,7 +459,7 @@ export default function App() {
                 )}
 
                 {/* Section Header */}
-                <div className="flex items-center justify-between mt-4 mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4 mb-4">
                   <div>
                     <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
                       <span>{curationScope === 'my-curations' ? 'Your Personal Curated List' : 'Curated First-Time Homebuyer Platter'}</span>
@@ -441,6 +473,22 @@ export default function App() {
                         : 'Pre-screened for 0%–3.5% down programs, 2-1 temporary buydowns, and local agent tours'}
                     </p>
                   </div>
+
+                  {/* Workplace Commute Control */}
+                  <button
+                    onClick={() => setIsWorkplaceModalOpen(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-cyan-500/40 hover:bg-slate-800/80 text-xs text-slate-300 transition-all shadow-sm group self-start sm:self-auto"
+                    title="Change primary workplace for commute calculations"
+                  >
+                    <div className="w-6 h-6 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-105 transition-transform">
+                      <Car className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="text-left">
+                      <span className="text-[10px] text-slate-400 block leading-tight font-medium">Commute Destination</span>
+                      <span className="font-bold text-cyan-300 text-xs truncate max-w-[160px] inline-block align-bottom">{workplaceAddress}</span>
+                    </div>
+                    <span className="text-[10px] text-cyan-400 underline font-semibold ml-1">Change</span>
+                  </button>
                 </div>
 
                 {/* Loading / Error States */}
@@ -532,11 +580,16 @@ export default function App() {
                 ) : (
                   /* Curated Cards Grid / Carousel */
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {listings.map(listing => (
+                    {(activeView === 'saved'
+                      ? listings.filter(l => favorites.includes(l.id))
+                      : listings
+                    ).map(listing => (
                       <ListingCard
                         key={listing.id}
                         listing={listing}
                         isFavorite={favorites.includes(listing.id)}
+                        workplaceAddress={workplaceAddress}
+                        onEditWorkplace={() => setIsWorkplaceModalOpen(true)}
                         onToggleFavorite={handleToggleFavorite}
                         onOpenNotes={(l) => setNotesListing(l)}
                         onOpenBuydown={(l) => setBuydownListing(l)}
@@ -584,36 +637,58 @@ export default function App() {
         </button>
       )}
 
-      {/* Mobile Tab Navigation Bar (390px safe, fixed at bottom) */}
+      {/* Mobile Tab Navigation Bar (390px safe, fixed at bottom): Explore / My Tour / Saved */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 px-3 py-1.5 flex items-center justify-around shadow-2xl safe-bottom">
         <button
           onClick={() => {
-            setActiveView('map');
+            setActiveView('explore');
             setIsSidebarOpen(false);
           }}
           className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
-            !isSidebarOpen && activeView === 'map'
-              ? 'text-cyan-400 font-bold bg-cyan-950/40'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <MapPin className="w-5 h-5 mb-0.5" />
-          <span className="text-[11px]">Map</span>
-        </button>
-
-        <button
-          onClick={() => {
-            setActiveView('list');
-            setIsSidebarOpen(false);
-          }}
-          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
-            !isSidebarOpen && activeView === 'list'
+            !isSidebarOpen && (activeView === 'explore' || activeView === 'list')
               ? 'text-cyan-400 font-bold bg-cyan-950/40'
               : 'text-slate-400 hover:text-slate-200'
           }`}
         >
           <Home className="w-5 h-5 mb-0.5" />
-          <span className="text-[11px]">Homes</span>
+          <span className="text-[11px]">Explore</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveView('my-tour');
+            setIsSidebarOpen(false);
+          }}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
+            !isSidebarOpen && (activeView === 'my-tour' || activeView === 'map')
+              ? 'text-cyan-400 font-bold bg-cyan-950/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <MapPin className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px]">My Tour</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveView('saved');
+            setIsSidebarOpen(false);
+          }}
+          className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all ${
+            !isSidebarOpen && activeView === 'saved'
+              ? 'text-rose-400 font-bold bg-rose-950/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Heart className="w-5 h-5 mb-0.5" />
+          <span className="text-[11px] flex items-center gap-1">
+            <span>Saved</span>
+            {favorites.length > 0 && (
+              <span className="text-[9px] px-1 rounded-full bg-rose-500/20 text-rose-300 font-mono">
+                {favorites.length}
+              </span>
+            )}
+          </span>
         </button>
 
         <button
@@ -718,6 +793,19 @@ export default function App() {
             setBuyerEmail(email);
             showToast(`Profile linked to ${email}!`);
             loadBuyerCurations(newLeadId);
+          }}
+        />
+      )}
+
+      {isWorkplaceModalOpen && (
+        <WorkplaceModal
+          isOpen={isWorkplaceModalOpen}
+          onClose={() => setIsWorkplaceModalOpen(false)}
+          currentWorkplace={workplaceAddress}
+          onSaveWorkplace={(newWorkplace) => {
+            setWorkplaceAddress(newWorkplace);
+            setStoredWorkplace(newWorkplace);
+            showToast(`Primary workplace set to "${newWorkplace}". Recalculating commutes.`);
           }}
         />
       )}

@@ -17,13 +17,18 @@ import {
   ArrowRight,
   ExternalLink,
   Clock,
-  Home
+  Home,
+  Car,
+  Briefcase
 } from 'lucide-react';
 import { CuratedListing } from '../types';
+import { calculateListingCommute, CommuteResult } from '../services/commuteService';
 
 interface ListingCardProps {
   listing: CuratedListing;
   isFavorite: boolean;
+  workplaceAddress?: string;
+  onEditWorkplace?: () => void;
   onToggleFavorite: (id: string) => void;
   onOpenNotes: (listing: CuratedListing) => void;
   onOpenBuydown: (listing: CuratedListing) => void;
@@ -35,6 +40,8 @@ interface ListingCardProps {
 export const ListingCard: React.FC<ListingCardProps> = ({
   listing,
   isFavorite,
+  workplaceAddress = 'Downtown Portland, OR',
+  onEditWorkplace,
   onToggleFavorite,
   onOpenNotes,
   onOpenBuydown,
@@ -44,6 +51,8 @@ export const ListingCard: React.FC<ListingCardProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+  const [commute, setCommute] = useState<CommuteResult | null>(null);
+  const [loadingCommute, setLoadingCommute] = useState<boolean>(true);
 
   const priceDropAmount = listing._previousPrice && listing.price
     ? listing._previousPrice - listing.price
@@ -54,6 +63,30 @@ export const ListingCard: React.FC<ListingCardProps> = ({
     : (listing.photoUrl ? [listing.photoUrl] : []);
 
   const currentPhoto = photos[activePhotoIndex] || listing.photoUrl;
+
+  // Calculate driving commute to primary workplace via Google Maps Distance Matrix
+  React.useEffect(() => {
+    let isCancelled = false;
+    setLoadingCommute(true);
+
+    const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyARI4dCmlkM7V7DOt4ts-TTpy2vmFFhtw4';
+    calculateListingCommute(listing, workplaceAddress, apiKey)
+      .then(res => {
+        if (!isCancelled) {
+          setCommute(res);
+          setLoadingCommute(false);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setLoadingCommute(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [listing.id, listing.address, workplaceAddress]);
 
   return (
     <motion.div
@@ -204,6 +237,53 @@ export const ListingCard: React.FC<ListingCardProps> = ({
             <div>
               <span className="text-slate-400 text-[10px] block">Built</span>
               <span className="font-bold text-slate-100">{listing.yearBuilt}</span>
+            </div>
+          </div>
+
+          {/* Estimated Commute to Primary Workplace (Google Maps Distance Matrix API) */}
+          <div className="mt-3 p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/90 flex items-center justify-between text-xs group/commute hover:border-cyan-500/30 transition-colors">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/25 flex items-center justify-center text-cyan-400 flex-shrink-0">
+                <Car className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                  <span className="truncate max-w-[150px] sm:max-w-[190px]" title={workplaceAddress}>
+                    Commute to {workplaceAddress}
+                  </span>
+                  {onEditWorkplace && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditWorkplace();
+                      }}
+                      className="text-cyan-400 hover:text-cyan-300 hover:underline text-[10px] font-medium flex-shrink-0"
+                      title="Change primary workplace"
+                    >
+                      Change
+                    </button>
+                  )}
+                </div>
+                <div className="font-bold text-slate-100 flex items-center gap-1.5 mt-0.5">
+                  {loadingCommute ? (
+                    <span className="text-slate-500 text-[11px] animate-pulse">Calculating commute...</span>
+                  ) : commute ? (
+                    <>
+                      <span className="text-cyan-300 font-semibold">{commute.durationText}</span>
+                      {commute.distanceText && (
+                        <span className="text-slate-400 font-normal text-[11px]">({commute.distanceText} drive)</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-slate-400 text-[11px]">Drive time via Google Maps</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="text-right text-[10px] text-slate-500 flex-shrink-0 ml-2">
+              <span className="block font-mono text-[9px] text-slate-400">Google Maps</span>
+              <span className="text-[9px] text-slate-500">Distance Matrix</span>
             </div>
           </div>
 

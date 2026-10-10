@@ -3,8 +3,8 @@ import React from 'react';
 import { Home, MapPin, Bell, Share2, Download, MessageSquare, ShieldCheck, Sparkles } from 'lucide-react';
 
 interface HeaderProps {
-  activeView: 'list' | 'map';
-  setActiveView: (view: 'list' | 'map') => void;
+  activeView: 'list' | 'map' | 'explore' | 'my-tour' | 'saved';
+  setActiveView: (view: any) => void;
   selectedCity: string;
   setSelectedCity: (city: string) => void;
   selectedProgram: string;
@@ -109,29 +109,48 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* View Switcher: List vs Map */}
+        {/* Navigation: Exactly Explore / My Tour / Saved */}
         <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
           <button
-            onClick={() => setActiveView('list')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-              activeView === 'list'
+            onClick={() => setActiveView('explore')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeView === 'explore' || activeView === 'list'
                 ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
+            title="Explore Curated Homes Platter"
           >
             <Home className="w-3.5 h-3.5" />
-            <span>Homes</span>
+            <span>Explore</span>
           </button>
           <button
-            onClick={() => setActiveView('map')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-              activeView === 'map'
+            onClick={() => setActiveView('my-tour')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeView === 'my-tour' || activeView === 'map'
                 ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
+            title="Interactive Map & Neighborhood Tour"
           >
             <MapPin className="w-3.5 h-3.5" />
-            <span>Map</span>
+            <span>My Tour</span>
+          </button>
+          <button
+            onClick={() => setActiveView('saved')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeView === 'saved'
+                ? 'bg-gradient-to-r from-rose-600 to-pink-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Saved Contenders (Top 3)"
+          >
+            <span className="text-xs">❤️</span>
+            <span>Saved</span>
+            {favoritesCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-slate-900 text-rose-300 text-[10px] font-mono">
+                {favoritesCount}
+              </span>
+            )}
           </button>
         </div>
 

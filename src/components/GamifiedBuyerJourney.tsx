@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Mike Ford, NMLS #288455. All Rights Reserved.
 import React, { useState, useEffect } from 'react';
 import { 
-  Trophy, 
+  BookOpen, 
   CheckCircle2, 
   Circle, 
   ArrowRight, 
@@ -9,13 +9,12 @@ import {
   ChevronDown, 
   ChevronUp, 
   Compass, 
-  Award, 
-  Clock, 
-  Calculator, 
   Heart, 
-  MessageSquare, 
   ShieldCheck, 
-  Calendar
+  Calendar,
+  MessageSquare,
+  Award,
+  Layers
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -23,7 +22,6 @@ export interface Milestone {
   id: string;
   title: string;
   subtitle: string;
-  xp: number;
   icon: string;
   completed: boolean;
   actionLabel?: string;
@@ -41,7 +39,7 @@ interface GamifiedBuyerJourneyProps {
   onOpenSchedule: () => void;
 }
 
-const STORAGE_KEY = 'fthb_gamified_progress_v1';
+const STORAGE_KEY = 'fthb_guidebook_progress_v1';
 
 export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
   favoritesCount,
@@ -74,7 +72,7 @@ export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
     return {};
   });
 
-  // Calculate dynamic milestones based on buyer actions + state
+  // Calculate dynamic stamps based on buyer actions + state
   const m1_explore = true; // Started browsing
   const m2_intake = Boolean(hasCurations || milestonesManual['intake_done']);
   const m3_favorites = favoritesCount >= 1;
@@ -86,45 +84,40 @@ export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
   const milestones: Milestone[] = [
     {
       id: 'm1_explore',
-      title: 'Explore Curated Platter',
-      subtitle: 'Browse pre-screened low & $0-down qualifying homes',
-      xp: 15,
+      title: 'Explore Curated Homes',
+      subtitle: "Browse curated low- and no-down-payment homes",
       icon: 'compass',
       completed: m1_explore
     },
     {
       id: 'm2_intake',
-      title: 'Prequal Blueprint',
-      subtitle: 'Generate zero-SSN pre-qualification numbers',
-      xp: 25,
-      icon: 'calculator',
+      title: 'Share Your Home Goals',
+      subtitle: "Tell us what you're dreaming of — zero SSN, no obligation",
+      icon: 'sparkles',
       completed: m2_intake,
-      actionLabel: m2_intake ? 'Completed' : 'Start Blueprint',
+      actionLabel: m2_intake ? 'Completed' : 'Start',
       actionKey: 'intake'
     },
     {
       id: 'm3_favorites',
-      title: 'Heart 1st Contender',
-      subtitle: 'Identify a home that fits your target monthly payment',
-      xp: 15,
+      title: 'Heart Your First Contender',
+      subtitle: 'Save a home you love',
       icon: 'heart',
       completed: m3_favorites,
-      actionLabel: m3_favorites ? 'Contender Saved' : 'Tap Heart on Home'
+      actionLabel: m3_favorites ? 'Saved' : 'Heart a Home'
     },
     {
       id: 'm4_top3',
-      title: 'Lock In Top 3 Contenders',
-      subtitle: 'Cap focus to top 3 homes for highest closing success',
-      xp: 20,
+      title: 'Lock In Your Top 3',
+      subtitle: 'Your three finalists, front and center',
       icon: 'award',
       completed: m4_top3,
       actionLabel: m4_top3 ? `${favoritesCount}/3 Locked` : `${favoritesCount}/3 Saved`
     },
     {
       id: 'm5_buydown',
-      title: 'Explore 2-1 Buydown',
-      subtitle: 'See how temporary buydowns drop payments $300-$500/mo',
-      xp: 15,
+      title: 'Explore the 2-1 Buydown',
+      subtitle: 'See how a 2-1 buydown can lower the early payments on a home',
       icon: 'sparkles',
       completed: m5_buydown,
       actionLabel: m5_buydown ? 'Explored' : 'Run Calculator',
@@ -132,63 +125,36 @@ export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
     },
     {
       id: 'm6_note',
-      title: 'Leave a Property Note',
-      subtitle: 'Ask Mike Ford or paired agent a question on any listing',
-      xp: 10,
+      title: 'Ask a Question',
+      subtitle: 'Leave a note for Mike Ford or your paired agent on any listing',
       icon: 'message',
       completed: m6_note,
-      actionLabel: m6_note ? 'Question Routed' : 'Open Any Listing Note'
+      actionLabel: m6_note ? 'Note Left' : 'Leave a Note'
     },
     {
       id: 'm7_strategy',
-      title: '1-on-1 Strategy Call',
-      subtitle: 'Review rate buydown & DPA overlays with Mike Ford (NMLS #288455)',
-      xp: 25,
+      title: 'Meet Your Team',
+      subtitle: 'Book a friendly strategy chat with Mike Ford (NMLS #288455)',
       icon: 'shield',
       completed: m7_strategy,
-      actionLabel: m7_strategy ? 'Strategy Call Set' : 'Schedule Call',
+      actionLabel: m7_strategy ? 'Chat Booked' : 'Schedule',
       actionKey: 'strategy'
     }
   ];
 
-  const totalPossibleXp = milestones.reduce((sum, m) => sum + m.xp, 0);
-  const earnedXp = milestones.filter(m => m.completed).reduce((sum, m) => sum + m.xp, 0);
   const completedCount = milestones.filter(m => m.completed).length;
-  const progressPercent = Math.round((earnedXp / totalPossibleXp) * 100);
+  const totalCount = milestones.length;
 
-  // Buyer Tier based on XP
-  let tierName = 'First-Time Explorer';
-  let tierBadge = 'Level 1';
-  let tierColor = 'text-cyan-400 border-cyan-500/30 bg-cyan-950/40';
-  let nextReward = 'Next unlock: Custom LO Curation Queue';
-
-  if (earnedXp >= 100) {
-    tierName = 'Purchase-Ready Buyer';
-    tierBadge = 'Level 4 • VIP';
-    tierColor = 'text-amber-300 border-amber-500/50 bg-amber-950/40';
-    nextReward = 'Final Step: Pre-approval letter issued & agent tour dispatched!';
-  } else if (earnedXp >= 70) {
-    tierName = 'Serious Contender';
-    tierBadge = 'Level 3';
-    tierColor = 'text-indigo-300 border-indigo-500/40 bg-indigo-950/40';
-    nextReward = 'Next unlock: Priority Showing Access with Paired Agent';
-  } else if (earnedXp >= 35) {
-    tierName = 'Financing Strategist';
-    tierBadge = 'Level 2';
-    tierColor = 'text-emerald-300 border-emerald-500/40 bg-emerald-950/40';
-    nextReward = 'Next unlock: Top 3 Side-by-Side Comparison';
-  }
-
-  // Trigger celebratory confetti when reaching 100%
+  // Trigger celebratory confetti when all stamps are earned
   useEffect(() => {
-    if (progressPercent === 100) {
+    if (completedCount === totalCount && totalCount > 0) {
       confetti({
         particleCount: 100,
         spread: 70,
         origin: { y: 0.6 }
       });
     }
-  }, [progressPercent]);
+  }, [completedCount, totalCount]);
 
   const toggleExpand = () => {
     const next = !isExpanded;
@@ -220,57 +186,62 @@ export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-r from-slate-900 via-slate-900/90 to-indigo-950/30 border border-slate-800 hover:border-cyan-500/40 rounded-2xl p-4 shadow-xl transition-all">
+    <div className="bg-gradient-to-r from-slate-900 via-slate-900/95 to-indigo-950/30 border border-slate-800 hover:border-cyan-500/40 rounded-2xl p-4 shadow-xl transition-all">
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-cyan-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 shadow-inner">
-            <Trophy className="w-5 h-5 text-amber-400" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-inner">
+            <BookOpen className="w-5 h-5 text-cyan-400" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-white tracking-wide">
-                First-Time Homebuyer Readiness Track
+                My Home Guidebook
               </h3>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold ${tierColor}`}>
-                {tierBadge} • {tierName}
+              <span className="text-[10px] px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-950/40 text-cyan-300 font-mono font-semibold">
+                {completedCount} of {totalCount} stamps
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              {completedCount} of {milestones.length} milestones complete • <span className="text-cyan-300 font-mono font-bold">{earnedXp} XP</span>
+              Collect stamps as you explore homes and build your personalized tour
             </p>
           </div>
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Progress Bar Gauge */}
-          <div className="w-32 sm:w-44 bg-slate-950 rounded-full h-2.5 p-0.5 border border-slate-800 overflow-hidden relative">
-            <div
-              className="bg-gradient-to-r from-cyan-500 via-indigo-500 to-amber-400 h-full rounded-full transition-all duration-500 shadow-sm"
-              style={{ width: `${Math.max(progressPercent, 5)}%` }}
-            />
+          {/* Stamps Indicator Dots */}
+          <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800">
+            {milestones.map((m) => (
+              <span
+                key={m.id}
+                title={m.title}
+                className={`w-2.5 h-2.5 rounded-full transition-all ${
+                  m.completed
+                    ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50'
+                    : 'bg-slate-700'
+                }`}
+              />
+            ))}
           </div>
-          <span className="text-xs font-mono font-bold text-cyan-300 min-w-[3rem] text-right">
-            {progressPercent}%
-          </span>
 
           <button
             onClick={toggleExpand}
             className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-all ml-1"
-            title={isExpanded ? 'Collapse Quest Track' : 'Expand Quest Track'}
+            title={isExpanded ? 'Collapse Guidebook' : 'Expand Guidebook'}
+            aria-label={isExpanded ? 'Collapse Guidebook' : 'Expand Guidebook'}
           >
             {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
         </div>
       </div>
 
-      {/* Expanded Roadmap / Quest Steps */}
+      {/* Expanded Roadmap / Stamps Grid */}
       {isExpanded && (
         <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3 animate-fade-in">
           <div className="flex items-center justify-between text-[11px] text-slate-400">
             <span className="flex items-center gap-1.5 text-slate-300">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span><strong>Next Milestone Advantage:</strong> {nextReward}</span>
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Each stamp marks an exploration milestone along your homebuying journey</span>
             </span>
             <span className="hidden sm:inline font-mono text-slate-500">
               Coached by Mike Ford (NMLS #288455)
@@ -302,7 +273,7 @@ export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
                           <Circle className="w-4 h-4 text-slate-600 flex-shrink-0" />
                         )}
                         <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
-                          Step {idx + 1}
+                          Stamp {idx + 1}
                         </span>
                       </div>
                       <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
@@ -310,7 +281,7 @@ export const GamifiedBuyerJourney: React.FC<GamifiedBuyerJourneyProps> = ({
                           ? 'bg-emerald-500/10 text-emerald-300'
                           : 'bg-slate-800 text-slate-400'
                       }`}>
-                        +{milestone.xp} XP
+                        {milestone.completed ? 'Earned' : 'Pending'}
                       </span>
                     </div>
 
