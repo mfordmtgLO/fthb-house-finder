@@ -166,6 +166,21 @@ export const ListingMap: React.FC<ListingMapProps> = ({
     };
   }, [isPlaying, journeyStatus, journeyCoords, journeyOpen, journeyMode, journeyView, playbackSpeed]);
 
+  // Pass the actual geographic route to Geo's live Three.js scene and synchronize
+  // the position with the Leaflet route slider/player.
+  useEffect(() => {
+    if (!geoReady || !journeyCoords.length) return;
+    geoFrameRef.current?.contentWindow?.postMessage({
+      type: 'geo-journey-route', coordinates: journeyCoords
+    }, window.location.origin);
+  }, [geoReady, journeyCoords]);
+  useEffect(() => {
+    if (!geoReady) return;
+    geoFrameRef.current?.contentWindow?.postMessage({
+      type: 'geo-journey-progress', progress: journeyStop / 100, paused: !isPlaying
+    }, window.location.origin);
+  }, [geoReady, journeyStop, isPlaying]);
+
   // Synchronize the real procedural 3D Geo rig's expressions and pin color with
   // the journey controls. Same-origin iframe messages only.
   useEffect(() => {
@@ -588,7 +603,7 @@ export const ListingMap: React.FC<ListingMapProps> = ({
               <label className="block text-xs text-slate-200">Preview route position: {Math.round(journeyStop)}%
                 <input aria-label="Preview position along route" className="w-full mt-2 accent-cyan-500" type="range" min="0" max="100" value={journeyStop} onChange={e => { stopPlayback(); const n = Number(e.target.value); playbackProgressRef.current = n; setJourneyStop(n); moveJourneyCursor(n / 100); setGeoState(n >= 100 ? 'arrive' : 'point'); }} />
               </label>
-              <p className="text-[10px] text-slate-400">Follow mode pans the overhead map. Geo's 3D preview reacts to journey state but his lab car uses a separate demonstration animation, not the real street route. Street and 3D Earth open external viewers.</p>
+              <p className="text-[10px] text-slate-400">Follow mode pans the overhead map. Geo's live 3D preview follows the returned road geometry and current playback position; it is not a street-imagery viewer or turn-by-turn navigation. Street and 3D Earth open external viewers.</p>
             </>
           )}
           <div className="relative h-40 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
