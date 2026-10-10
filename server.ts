@@ -143,6 +143,57 @@ function requirePluginOperational(req: Request, res: Response, next: NextFunctio
 // API Endpoints
 // -----------------------------------------------------------------------------
 
+// Geo Journey route proxy. Keep routing credentials off the buyer's device.
+// A managed OSRM-compatible HTTPS endpoint is required for production.
+// The public demo can be enabled only for explicit non-production preview testing.
+app.post('/api/journey/route', requirePluginOperational, async (req: Request, res: Response): Promise<void> => {
+  const raw = req.body?.points;
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 5 ||
+      !raw.every((p: unknown) => Array.isArray(p) && p.length === 2 &&
+        p.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)) &&
+        p[0] >= 41 && p[0] <= 47 && p[1] >= -125 && p[1] <= -116)) {
+    res.status(400).json({ error: 'Provide 2–5 valid Oregon-area [latitude, longitude] coordinates.' });
+    return;
+  }
+  const points = raw as [number, number][];
+  const configured = (process.env.JOURNEY_ROUTING_BASE_URL || '').trim();
+  const preview = process.env.VERCEL_ENV === 'preview' || process.env.NODE_ENV !== 'production';
+  const allowDemo = preview && process.env.JOURNEY_ALLOW_DEMO_ROUTING === 'true';
+  const base = configured || (allowDemo ? 'https://router.project-osrm.org' : '');
+  if (!base) {
+    res.status(503).json({ error: 'Routing is not configured. An approved routing provider is required.' });
+    return;
+  }
+  let parsed: URL;
+  try { parsed = new URL(base); } catch {
+    res.status(503).json({ error: 'Routing provider configuration is invalid.' });
+    return;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    res.status(503).json({ error: 'Routing provider must use a clean HTTPS base URL.' });
+    return;
+  }
+  const coords = points.map(([lat, lon]) => `${lon},${lat}`).join(';');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const endpoint = new URL(`/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`, parsed.origin);
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (process.env.JOURNEY_ROUTING_API_KEY) headers.Authorization = `Bearer ${process.env.JOURNEY_ROUTING_API_KEY}`;
+    const response = await fetch(endpoint, { headers, signal: controller.signal });
+    if (!response.ok) throw new Error('Routing provider returned an error');
+    const result = await response.json();
+    const route = result.routes?.[0];
+    if (result.code !== 'Ok' || !Array.isArray(route?.geometry?.coordinates) || route.geometry.coordinates.length > 20000) {
+      throw new Error('No valid drivable route was returned');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ coordinates: route.geometry.coordinates, provider: configured ? 'configured' : 'demo-preview', previewOnly: !configured });
+  } catch {
+    res.status(502).json({ error: 'Route unavailable. Try again later.' });
+  } finally { clearTimeout(timeout); }
+});
+
 // Get Co-Branded Pairing Details
 app.get('/api/pairing/:pairingId', async (req: Request, res: Response): Promise<void> => {
   const { pairingId } = req.params;
