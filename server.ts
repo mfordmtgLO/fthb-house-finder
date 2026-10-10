@@ -87,7 +87,7 @@ const portArgIndex = process.argv.indexOf('--port');
 const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
 const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
 // Port 8080 is reserved by the container's Nginx reverse proxy. Dev server must always run on port 3000.
-const PORT = cliPort || (envPort && envPort !== 8080 ? envPort : 3000);
+const PORT = cliPort || envPort || 3000;
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
 // Server-side dedicated fail-closed API Key
@@ -532,45 +532,28 @@ app.get('/api/listings/:id', async (req: Request, res: Response): Promise<void> 
 });
 
 // 3a. Google Maps Distance Matrix & Routes Commute API Proxy
-app.post('/api/commute/matrix', async (req: Request, res: Response): Promise<void> => {
+// Security: Session-gated to prevent anonymous spend of server quota.
+app.post('/api/commute/matrix', requirePluginOperational, requireBuyerSession(getBuyerSession), async (req: Request, res: Response): Promise<void> => {
   const { origins, destination, travelMode = 'DRIVE' } = req.body;
-  if (!Array.isArray(origins) || origins.length === 0 || !destination) {
+  if (!Array.isArray(origins) || origins.length === 0 || !destination || typeof destination !== 'string') {
     res.status(400).json({ error: 'Missing origins array or destination string' });
     return;
   }
 
-  const apiKey = (process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyARI4dCmlkM7V7DOt4ts-TTpy2vmFFhtw4').trim();
-
-  // Known Portland regional coordinates
-  const WORKPLACE_COORDS: Record<string, { lat: number; lng: number }> = {
-    'downtown portland, or': { lat: 45.5152, lng: -122.6784 },
-    'one bowerman dr, beaverton, or': { lat: 45.5085, lng: -122.8277 },
-    '2501 ne century blvd, hillsboro, or': { lat: 45.5422, lng: -122.9234 },
-    '3181 sw sam jackson park rd, portland, or': { lat: 45.4996, lng: -122.6853 },
-    '9205 sw barnes rd, portland, or': { lat: 45.5147, lng: -122.7667 },
-    'downtown vancouver, wa': { lat: 45.6263, lng: -122.6719 }
-  };
-
-  const destLower = String(destination).trim().toLowerCase();
-  const destCoord = WORKPLACE_COORDS[destLower] || { lat: 45.5152, lng: -122.6784 };
-
-  // Calibrated routing helper
-  const calcApprox = (lat: number, lng: number) => {
-    const dLat = (destCoord.lat - (lat || 45.5152)) * 69;
-    const dLng = (destCoord.lng - (lng || -122.6784)) * 49;
-    const straight = Math.sqrt(dLat * dLat + dLng * dLng);
-    const miles = Math.max(Math.round(straight * 1.32 * 10) / 10, 1.4);
-    const mins = Math.max(Math.round((miles / 28) * 60) + 3, 5);
-    return {
-      durationMinutes: mins,
-      durationText: `${mins} mins`,
-      distanceText: `${miles.toFixed(1)} mi`
-    };
-  };
+  // Key comes ONLY from environment variables (never hardcoded literal)
+  const apiKey = (process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+  if (!apiKey) {
+    res.status(503).json({
+      error: 'Google Maps API key not configured',
+      available: false,
+      results: []
+    });
+    return;
+  }
 
   try {
     const formattedOrigins = origins.map((o: any) => {
-      if (o.latitude && o.longitude) {
+      if (o.latitude !== undefined && o.longitude !== undefined && o.latitude !== null && o.longitude !== null) {
         return {
           waypoint: {
             location: {
@@ -584,19 +567,14 @@ app.post('/api/commute/matrix', async (req: Request, res: Response): Promise<voi
       }
       return {
         waypoint: {
-          address: String(o.address || destination)
+          address: String(o.address || '').trim()
         }
       };
     });
 
     const destinationWaypoint = {
       waypoint: {
-        location: {
-          latLng: {
-            latitude: destCoord.lat,
-            longitude: destCoord.lng
-          }
-        }
+        address: destination.trim()
       }
     };
 
@@ -628,7 +606,7 @@ app.post('/api/commute/matrix', async (req: Request, res: Response): Promise<voi
         const results = origins.map((orig: any, idx: number) => {
           const match = resultMap.get(idx);
           if (match && match.duration) {
-            const rawSec = parseInt(match.duration.replace('s', ''), 10) || 900;
+            const rawSec = parseInt(match.duration.replace('s', ''), 10) || 0;
             const mins = Math.round(rawSec / 60);
             const miles = match.distanceMeters ? (match.distanceMeters * 0.000621371).toFixed(1) + ' mi' : '';
             return {
@@ -639,12 +617,11 @@ app.post('/api/commute/matrix', async (req: Request, res: Response): Promise<voi
               destinationAddress: destination
             };
           }
-          const approx = calcApprox(orig.latitude, orig.longitude);
           return {
             id: orig.id,
-            durationMinutes: approx.durationMinutes,
-            durationText: approx.durationText,
-            distanceText: approx.distanceText,
+            durationMinutes: null,
+            durationText: null,
+            distanceText: null,
             destinationAddress: destination
           };
         });
@@ -652,24 +629,25 @@ app.post('/api/commute/matrix', async (req: Request, res: Response): Promise<voi
         res.json({ results, source: 'google_maps_distance_matrix' });
         return;
       }
+    } else {
+      const errText = await gmpResponse.text();
+      console.warn(`[Routes API] computeRouteMatrix failed with status ${gmpResponse.status}:`, errText);
     }
-  } catch (err) {
-    console.warn('[Routes API] Matrix call encountered error, using calibrated fallbacks:', err);
+  } catch (err: any) {
+    console.warn('[Routes API] Matrix call encountered error:', err?.message || err);
   }
 
-  // Fallback response with calibrated routing
-  const fallbackResults = origins.map((orig: any) => {
-    const approx = calcApprox(orig.latitude, orig.longitude);
-    return {
+  // Real route unavailable: do NOT invent or fabricate driving times
+  res.status(502).json({
+    error: 'Google Maps route calculation unavailable',
+    results: origins.map((orig: any) => ({
       id: orig.id,
-      durationMinutes: approx.durationMinutes,
-      durationText: approx.durationText,
-      distanceText: approx.distanceText,
+      durationMinutes: null,
+      durationText: null,
+      distanceText: null,
       destinationAddress: destination
-    };
+    }))
   });
-
-  res.json({ results: fallbackResults, source: 'calibrated_routing' });
 });
 
 // 3b. Per-Lead Curations Endpoint (Reads lead_curations/{leadId} cross-project)

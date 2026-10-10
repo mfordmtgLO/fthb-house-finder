@@ -69,7 +69,7 @@ export const ListingCard: React.FC<ListingCardProps> = ({
     let isCancelled = false;
     setLoadingCommute(true);
 
-    const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyARI4dCmlkM7V7DOt4ts-TTpy2vmFFhtw4';
+    const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || '';
     calculateListingCommute(listing, workplaceAddress, apiKey)
       .then(res => {
         if (!isCancelled) {
@@ -79,6 +79,7 @@ export const ListingCard: React.FC<ListingCardProps> = ({
       })
       .catch(() => {
         if (!isCancelled) {
+          setCommute(null);
           setLoadingCommute(false);
         }
       });
@@ -268,7 +269,7 @@ export const ListingCard: React.FC<ListingCardProps> = ({
                 <div className="font-bold text-slate-100 flex items-center gap-1.5 mt-0.5">
                   {loadingCommute ? (
                     <span className="text-slate-500 text-[11px] animate-pulse">Calculating commute...</span>
-                  ) : commute ? (
+                  ) : commute && commute.durationText ? (
                     <>
                       <span className="text-cyan-300 font-semibold">{commute.durationText}</span>
                       {commute.distanceText && (
@@ -276,7 +277,7 @@ export const ListingCard: React.FC<ListingCardProps> = ({
                       )}
                     </>
                   ) : (
-                    <span className="text-slate-400 text-[11px]">Drive time via Google Maps</span>
+                    <span className="text-slate-400 text-[11px]">Commute unavailable</span>
                   )}
                 </div>
               </div>

@@ -4,6 +4,7 @@
  * Calculates driving commute time and distance between listing properties
  * and the buyer's primary workplace using the Google Maps Distance Matrix API.
  */
+import { getLocalLeadId } from '../api';
 
 declare global {
   interface Window {
@@ -17,11 +18,11 @@ export interface CommuteResult {
   durationMinutes: number;
   distanceText: string;
   destinationAddress: string;
-  source?: 'google_maps_distance_matrix' | 'google_maps_routes_api' | 'calibrated_routing';
+  source?: 'google_maps_distance_matrix' | 'google_maps_routes_api';
 }
 
 const STORAGE_WORKPLACE_KEY = 'fthb_buyer_primary_workplace_v1';
-const COMMUTE_CACHE_PREFIX = 'fthb_commute_cache_v2_';
+const COMMUTE_CACHE_PREFIX = 'fthb_commute_cache_v3_';
 
 export const DEFAULT_WORKPLACE = 'Downtown Portland, OR';
 
@@ -43,14 +44,14 @@ export function setStoredWorkplace(workplace: string): void {
   }
 }
 
-// In-memory cache to avoid duplicate Distance Matrix API calls
+// In-memory cache to store real verified Google Maps route results
 const memoryCache = new Map<string, CommuteResult>();
 
 /**
  * Loads the Google Maps JavaScript API with the routes library
  */
 export function loadGoogleMapsScript(apiKey: string): Promise<void> {
-  if (typeof window === 'undefined') return Promise.resolve();
+  if (typeof window === 'undefined' || !apiKey) return Promise.resolve();
   if (window.google?.maps?.DistanceMatrixService) return Promise.resolve();
 
   if (window.__gmp_maps_loading__) {
@@ -58,7 +59,6 @@ export function loadGoogleMapsScript(apiKey: string): Promise<void> {
   }
 
   window.__gmp_maps_loading__ = new Promise<void>((resolve, reject) => {
-    // Check if script element already exists
     const existing = document.querySelector('script[src*="maps.googleapis.com/maps/api/js"]');
     if (existing) {
       existing.addEventListener('load', () => resolve());
@@ -79,76 +79,46 @@ export function loadGoogleMapsScript(apiKey: string): Promise<void> {
 }
 
 /**
- * Regional landmark coordinates for distance calculations
- */
-const WORKPLACE_COORDINATES: Record<string, { lat: number; lng: number }> = {
-  'downtown portland, or': { lat: 45.5152, lng: -122.6784 },
-  'one bowerman dr, beaverton, or': { lat: 45.5085, lng: -122.8277 },
-  '2501 ne century blvd, hillsboro, or': { lat: 45.5422, lng: -122.9234 },
-  '3181 sw sam jackson park rd, portland, or': { lat: 45.4996, lng: -122.6853 },
-  '9205 sw barnes rd, portland, or': { lat: 45.5147, lng: -122.7667 },
-  'downtown vancouver, wa': { lat: 45.6263, lng: -122.6719 }
-};
-
-/**
- * High-fidelity route calculation based on coordinates and real road network factors
- */
-function approximateCommute(
-  originLat: number,
-  originLng: number,
-  workplaceAddress: string
-): CommuteResult {
-  const normalizedKey = workplaceAddress.trim().toLowerCase();
-  const destCoords = WORKPLACE_COORDINATES[normalizedKey] || { lat: 45.5152, lng: -122.6784 };
-
-  const dLat = (destCoords.lat - originLat) * 69; // ~69 statute miles per degree lat
-  const dLng = (destCoords.lng - originLng) * 49; // ~49 miles per degree lng in Pacific NW
-  const straightMiles = Math.sqrt(dLat * dLat + dLng * dLng);
-  
-  // Portland metro road winding factor: ~1.32x straight line distance
-  const roadMiles = Math.max(Math.round(straightMiles * 1.32 * 10) / 10, 1.4);
-  
-  // Metro traffic speed: 28 mph average + 3 mins signal/stop ramp buffer
-  const minutes = Math.max(Math.round((roadMiles / 28) * 60) + 3, 5);
-
-  return {
-    durationText: `${minutes} mins`,
-    durationMinutes: minutes,
-    distanceText: `${roadMiles.toFixed(1)} mi`,
-    destinationAddress: workplaceAddress,
-    source: 'calibrated_routing'
-  };
-}
-
-/**
- * Computes commute time for a listing address/coordinates using Google Maps Distance Matrix API
+ * Computes commute time for a listing address/coordinates using Google Maps Distance Matrix API.
+ * Returns null if real Google route calculation is unavailable (never fabricates times).
  */
 export async function calculateListingCommute(
   listing: { address: string; city: string; state: string; latitude: number; longitude: number; id: string },
   workplaceAddress: string,
   apiKey: string
-): Promise<CommuteResult> {
+): Promise<CommuteResult | null> {
+  if (!workplaceAddress || !workplaceAddress.trim()) {
+    return null;
+  }
+
   const cacheKey = `${listing.id}_${workplaceAddress.trim().toLowerCase()}`;
 
+  // 1. Check in-memory verified cache
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey)!;
   }
 
-  // Check sessionStorage
+  // 2. Check sessionStorage verified cache
   try {
     const cachedJson = sessionStorage.getItem(COMMUTE_CACHE_PREFIX + cacheKey);
     if (cachedJson) {
       const parsed = JSON.parse(cachedJson);
-      memoryCache.set(cacheKey, parsed);
-      return parsed;
+      if (parsed && typeof parsed.durationMinutes === 'number' && parsed.durationMinutes > 0) {
+        memoryCache.set(cacheKey, parsed);
+        return parsed;
+      }
     }
   } catch {}
 
-  // 1. Try Backend Proxy endpoint (/api/commute/matrix) first
+  // 3. Try Backend Proxy endpoint (/api/commute/matrix) gated by active buyer session
   try {
+    const leadId = getLocalLeadId();
     const response = await fetch('/api/commute/matrix', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-session-id': leadId || ''
+      },
       body: JSON.stringify({
         origins: [{
           id: listing.id,
@@ -156,20 +126,20 @@ export async function calculateListingCommute(
           latitude: listing.latitude,
           longitude: listing.longitude
         }],
-        destination: workplaceAddress
+        destination: workplaceAddress.trim()
       })
     });
 
     if (response.ok) {
       const data = await response.json();
       const match = data.results?.[0];
-      if (match && match.durationMinutes) {
+      if (match && typeof match.durationMinutes === 'number' && match.durationMinutes > 0) {
         const result: CommuteResult = {
           durationText: match.durationText || `${match.durationMinutes} mins`,
           durationMinutes: match.durationMinutes,
           distanceText: match.distanceText || '',
           destinationAddress: match.destinationAddress || workplaceAddress,
-          source: data.source || 'google_maps_distance_matrix'
+          source: 'google_maps_distance_matrix'
         };
 
         memoryCache.set(cacheKey, result);
@@ -179,67 +149,64 @@ export async function calculateListingCommute(
         return result;
       }
     }
-  } catch {
-    // If backend proxy is unreachable or network error, continue to client-side attempt
-  }
-
-  // 2. Try Client-side Google Maps Distance Matrix Service
-  try {
-    await loadGoogleMapsScript(apiKey);
-
-    if (window.google?.maps?.DistanceMatrixService) {
-      const service = new window.google.maps.DistanceMatrixService();
-      
-      const origin = listing.latitude && listing.longitude
-        ? new window.google.maps.LatLng(listing.latitude, listing.longitude)
-        : `${listing.address}, ${listing.city}, ${listing.state}`;
-
-      const res: any = await new Promise((resolve, reject) => {
-        service.getDistanceMatrix(
-          {
-            origins: [origin],
-            destinations: [workplaceAddress],
-            travelMode: window.google.maps.TravelMode.DRIVING,
-            unitSystem: window.google.maps.UnitSystem.IMPERIAL
-          },
-          (matrixRes: any, status: any) => {
-            if (status === 'OK' && matrixRes?.rows?.[0]?.elements?.[0]?.status === 'OK') {
-              resolve(matrixRes);
-            } else {
-              reject(new Error(`Distance Matrix returned status: ${status}`));
-            }
-          }
-        );
-      });
-
-      const element = res.rows[0].elements[0];
-      const durationSeconds = element.duration?.value || 1200;
-      const durationMins = Math.round(durationSeconds / 60);
-
-      const result: CommuteResult = {
-        durationText: element.duration?.text || `${durationMins} mins`,
-        durationMinutes: durationMins,
-        distanceText: element.distance?.text || '',
-        destinationAddress: res.destinationAddresses?.[0] || workplaceAddress,
-        source: 'google_maps_distance_matrix'
-      };
-
-      memoryCache.set(cacheKey, result);
-      try {
-        sessionStorage.setItem(COMMUTE_CACHE_PREFIX + cacheKey, JSON.stringify(result));
-      } catch {}
-
-      return result;
-    }
   } catch (err) {
-    // Falls back gracefully
+    // Backend proxy call failed or network issue
   }
 
-  // 3. High-fidelity calibrated routing fallback
-  const approx = approximateCommute(listing.latitude, listing.longitude, workplaceAddress);
-  memoryCache.set(cacheKey, approx);
-  try {
-    sessionStorage.setItem(COMMUTE_CACHE_PREFIX + cacheKey, JSON.stringify(approx));
-  } catch {}
-  return approx;
+  // 4. Try Client-side Google Maps Distance Matrix Service if browser API key is provided
+  if (apiKey && apiKey.trim()) {
+    try {
+      await loadGoogleMapsScript(apiKey.trim());
+
+      if (window.google?.maps?.DistanceMatrixService) {
+        const service = new window.google.maps.DistanceMatrixService();
+
+        const origin = listing.latitude && listing.longitude
+          ? new window.google.maps.LatLng(listing.latitude, listing.longitude)
+          : `${listing.address}, ${listing.city}, ${listing.state}`;
+
+        const res: any = await new Promise((resolve, reject) => {
+          service.getDistanceMatrix(
+            {
+              origins: [origin],
+              destinations: [workplaceAddress.trim()],
+              travelMode: window.google.maps.TravelMode.DRIVING,
+              unitSystem: window.google.maps.UnitSystem.IMPERIAL
+            },
+            (matrixRes: any, status: any) => {
+              if (status === 'OK' && matrixRes?.rows?.[0]?.elements?.[0]?.status === 'OK') {
+                resolve(matrixRes);
+              } else {
+                reject(new Error(`Distance Matrix returned status: ${status}`));
+              }
+            }
+          );
+        });
+
+        const element = res.rows[0].elements[0];
+        if (element && element.status === 'OK' && element.duration?.value) {
+          const durationMins = Math.round(element.duration.value / 60);
+          const result: CommuteResult = {
+            durationText: element.duration.text || `${durationMins} mins`,
+            durationMinutes: durationMins,
+            distanceText: element.distance?.text || '',
+            destinationAddress: res.destinationAddresses?.[0] || workplaceAddress,
+            source: 'google_maps_distance_matrix'
+          };
+
+          memoryCache.set(cacheKey, result);
+          try {
+            sessionStorage.setItem(COMMUTE_CACHE_PREFIX + cacheKey, JSON.stringify(result));
+          } catch {}
+
+          return result;
+        }
+      }
+    } catch {
+      // Client-side Distance Matrix call failed
+    }
+  }
+
+  // Real Google route calculation unavailable. Do NOT cache failures as results.
+  return null;
 }
