@@ -35,6 +35,92 @@ export const ListingMap: React.FC<ListingMapProps> = ({
   const [tractCount, setTractCount] = useState(0);
   const tractLayerRef = useRef<L.GeoJSON | null>(null);
   const [showLayers, setShowLayers] = useState(false);
+  const [journeyOpen, setJourneyOpen] = useState(false);
+  const [journeyMode, setJourneyMode] = useState<'tour' | 'commute'>('tour');
+  const [journeyView, setJourneyView] = useState<'map' | 'drive' | 'street' | 'earth'>('map');
+  const [journeyStatus, setJourneyStatus] = useState<'idle' | 'select' | 'loading' | 'ready' | 'error'>('idle');
+  const [journeyError, setJourneyError] = useState('');
+  const [journeyStop, setJourneyStop] = useState(0);
+  const [journeyCoords, setJourneyCoords] = useState<[number, number][]>([]);
+  const [commutePoint, setCommutePoint] = useState<[number, number] | null>(null);
+  const routeLayerRef = useRef<L.Polyline | null>(null);
+  const routeCursorRef = useRef<L.CircleMarker | null>(null);
+  const routeAbortRef = useRef<AbortController | null>(null);
+  const tourStops = favorites.map(id => listings.find(item => item.id === id)).filter((item): item is CuratedListing => Boolean(item)).slice(0, 4);
+  const activeJourneyStops = journeyMode === 'tour' ? tourStops : (tourStops.length ? [tourStops[0]] : []);
+  const routeStopPositions: [number, number][] = activeJourneyStops.map(item => [item.latitude, item.longitude]);
+  if (journeyMode === 'commute' && commutePoint) routeStopPositions.push(commutePoint);
+
+  const clearJourney = () => {
+    routeAbortRef.current?.abort();
+    const map = mapInstanceRef.current;
+    if (map && routeLayerRef.current) map.removeLayer(routeLayerRef.current);
+    if (map && routeCursorRef.current) map.removeLayer(routeCursorRef.current);
+    routeLayerRef.current = null;
+    routeCursorRef.current = null;
+    setJourneyCoords([]);
+    setJourneyStatus('idle');
+    setJourneyStop(0);
+  };
+  const startJourney = async () => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    if (journeyMode === 'commute' && !commutePoint) {
+      setJourneyStatus('select');
+      return;
+    }
+    if (routeStopPositions.length < 2) {
+      setJourneyStatus('error');
+      setJourneyError(journeyMode === 'tour' ? 'Favorite at least two curated homes to plan a tour (up to four).' : 'Favorite your starting home and choose a destination on the map.');
+      return;
+    }
+    routeAbortRef.current?.abort();
+    const controller = new AbortController();
+    routeAbortRef.current = controller;
+    setJourneyStatus('loading');
+    setJourneyError('');
+    // OSRM public demo service is used for preview only. Production requires an approved routing provider.
+    const coordinates = routeStopPositions.map(([lat, lon]) => `${lon},${lat}`).join(';');
+    try {
+      const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal });
+      if (!response.ok) throw new Error('Routing service unavailable');
+      const data = await response.json();
+      if (data.code !== 'Ok' || !data.routes?.[0]?.geometry?.coordinates?.length) throw new Error('No drivable route found');
+      if (controller.signal.aborted) return;
+      const points: [number, number][] = data.routes[0].geometry.coordinates.map(([lon, lat]: [number, number]) => [lat, lon]);
+      if (routeLayerRef.current) map.removeLayer(routeLayerRef.current);
+      if (routeCursorRef.current) map.removeLayer(routeCursorRef.current);
+      const route = L.polyline(points, { color: '#06b6d4', weight: 6, opacity: 0.9 }).addTo(map);
+      routeLayerRef.current = route;
+      routeCursorRef.current = L.circleMarker(points[0], { radius: 9, color: '#ffffff', fillColor: '#0891b2', fillOpacity: 1, weight: 3 }).addTo(map);
+      map.fitBounds(route.getBounds(), { padding: [55, 55] });
+      setJourneyCoords(points);
+      setJourneyStop(0);
+      setJourneyStatus('ready');
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setJourneyStatus('error');
+      setJourneyError(error instanceof Error ? error.message : 'Unable to plan route');
+    }
+  };
+  const moveJourneyCursor = (fraction: number) => {
+    const map = mapInstanceRef.current;
+    if (!map || !journeyCoords.length) return;
+    const index = Math.min(journeyCoords.length - 1, Math.round(fraction * (journeyCoords.length - 1)));
+    const position = journeyCoords[index];
+    routeCursorRef.current?.setLatLng(position);
+    if (journeyView === 'drive') map.flyTo(position, Math.max(map.getZoom(), 16), { duration: 0.5 });
+  };
+  // The journey's Street and Earth modes open real external viewers, not fake street imagery.
+  const openJourneyExternal = (kind: 'street' | 'earth') => {
+    const position = routeCursorRef.current?.getLatLng() ?? mapInstanceRef.current?.getCenter();
+    if (!position) return;
+    const latitude = position.lat.toFixed(6), longitude = position.lng.toFixed(6);
+    const url = kind === 'street'
+      ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${latitude}%2C${longitude}`
+      : `https://earth.google.com/web/search/${latitude}%2C${longitude}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   // External imagery viewers use the map center; no Google API keys or imagery are embedded.
   const openExternalView = (kind: 'street' | 'earth') => {
@@ -213,6 +299,21 @@ export const ListingMap: React.FC<ListingMapProps> = ({
     };
   }, [showLowTracts, showModerateTracts]);
 
+  // In commute mode, a map click chooses the destination. Other modes preserve normal pin clicks.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !journeyOpen || journeyMode !== 'commute' || journeyStatus !== 'select') return;
+    const choose = (event: L.LeafletMouseEvent) => {
+      setCommutePoint([event.latlng.lat, event.latlng.lng]);
+      setJourneyStatus('idle');
+    };
+    map.on('click', choose);
+    return () => { map.off('click', choose); };
+  }, [journeyOpen, journeyMode, journeyStatus]);
+
+  // Remove transient route layers when the map unmounts.
+  useEffect(() => () => { routeAbortRef.current?.abort(); }, []);
+
   // Update Markers
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -377,6 +478,45 @@ export const ListingMap: React.FC<ListingMapProps> = ({
         </div>
       )}
 
+      {/* Geo Journey controls: route geometry is real; first-person imagery is NOT simulated. */}
+      {journeyOpen && (
+        <div className="absolute top-16 left-3 z-[1000] w-[min(330px,calc(100vw-28px))] max-h-[calc(100%-90px)] overflow-y-auto rounded-xl border border-slate-700 bg-slate-900/95 p-4 text-white shadow-2xl space-y-3">
+          <div className="flex items-center justify-between">
+            <strong className="text-sm">Geo Journey Planner</strong>
+            <button onClick={() => setJourneyOpen(false)} aria-label="Close journey planner" className="text-slate-300 hover:text-white">✕</button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <button onClick={() => { clearJourney(); setJourneyMode('tour'); }} aria-pressed={journeyMode === 'tour'} className={`rounded-lg p-2 ${journeyMode === 'tour' ? 'bg-cyan-600' : 'bg-slate-700'}`}>4-home tour</button>
+            <button onClick={() => { clearJourney(); setJourneyMode('commute'); }} aria-pressed={journeyMode === 'commute'} className={`rounded-lg p-2 ${journeyMode === 'commute' ? 'bg-cyan-600' : 'bg-slate-700'}`}>Commute</button>
+          </div>
+          <p className="text-[11px] text-slate-300">
+            {journeyMode === 'tour'
+              ? `${tourStops.length} of 4 homes selected from favorites. The route follows your saved order.`
+              : commutePoint ? `Destination selected: ${commutePoint[0].toFixed(4)}, ${commutePoint[1].toFixed(4)}` : 'Favorite a starting home, then select your commute destination on the map.'}
+          </p>
+          {journeyMode === 'tour' && <ol className="space-y-1 text-[11px] text-slate-200">{tourStops.map((home, i) => <li key={home.id}>{i + 1}. {home.address}</li>)}</ol>}
+          {journeyMode === 'commute' && <button onClick={() => { clearJourney(); setJourneyStatus('select'); }} className="w-full rounded-lg bg-slate-700 p-2 text-xs">Choose destination on map</button>}
+          {journeyStatus === 'select' && <p role="status" className="text-xs text-cyan-300">Click your destination on the map.</p>}
+          <button onClick={startJourney} disabled={journeyStatus === 'loading'} className="w-full rounded-lg bg-cyan-600 p-2 text-xs font-bold hover:bg-cyan-500 disabled:opacity-50">{journeyStatus === 'loading' ? 'Finding drivable route…' : 'Plan route'}</button>
+          {journeyStatus === 'error' && <p role="alert" className="text-xs text-rose-300">{journeyError}</p>}
+          {journeyStatus === 'ready' && (
+            <>
+              <div className="grid grid-cols-4 gap-1 text-[10px]">
+                {(['map','drive','street','earth'] as const).map(view => (
+                  <button key={view} aria-pressed={journeyView === view} onClick={() => { setJourneyView(view); if (view === 'street' || view === 'earth') openJourneyExternal(view); }} className={`rounded-lg p-2 capitalize ${journeyView === view ? 'bg-cyan-600' : 'bg-slate-700'}`}>{view === 'drive' ? 'Follow' : view === 'earth' ? '3D Earth ↗' : view === 'street' ? 'Street ↗' : 'Map'}</button>
+                ))}
+              </div>
+              <label className="block text-xs text-slate-200">Preview route position
+                <input aria-label="Preview position along route" className="w-full mt-2 accent-cyan-500" type="range" min="0" max="100" value={journeyStop} onChange={e => { const n = Number(e.target.value); setJourneyStop(n); moveJourneyCursor(n / 100); }} />
+              </label>
+              <p className="text-[10px] text-slate-400">Follow mode moves the map camera along the road. It is not street-level imagery or an animated Geo character. Street and 3D Earth open external viewers at the selected position.</p>
+            </>
+          )}
+          <button onClick={clearJourney} className="text-xs text-slate-300 underline">Clear route</button>
+          <p className="text-[10px] text-slate-400">Preview routing uses OSRM's public demonstration server; do not use for production navigation or guaranteed drive times.</p>
+        </div>
+      )}
+
       {/* Floating Controls Bar: Left */}
       <div className="absolute top-3 left-3 z-[1000] flex items-center space-x-1.5">
         <button
@@ -387,6 +527,10 @@ export const ListingMap: React.FC<ListingMapProps> = ({
           <span className="hidden sm:inline">Back to Curated Homes List</span>
           <span className="sm:hidden text-[11px]">List</span>
         </button>
+      </div>
+
+      <div className="absolute top-3 left-24 sm:left-44 z-[1000]">
+        <button onClick={() => setJourneyOpen(!journeyOpen)} aria-expanded={journeyOpen} className="rounded-xl bg-cyan-700 hover:bg-cyan-600 px-3 py-2 text-white text-xs font-semibold border border-cyan-500 shadow-xl">Geo Journey</button>
       </div>
 
       {/* Floating Controls Bar: Right */}
