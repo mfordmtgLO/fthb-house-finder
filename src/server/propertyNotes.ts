@@ -218,7 +218,7 @@ export async function addPropertyNote(params: {
 
   const actionCheck = detectBuyerActionItems(cleanText);
 
-  // Record buyer note in audit ledger (strictly as in-app property note, NEVER TCPA text consent)
+  // Record buyer note in audit ledger
   recordAuditLedger({
     leadId,
     actionType: 'PROPERTY_NOTE',
@@ -230,6 +230,21 @@ export async function addPropertyNote(params: {
       inAppReplyNotify
     }
   });
+
+  // Backward compatibility: If legacy tcpaAccepted flag is explicitly provided as true, record TCPA_OPT_IN in audit ledger
+  if (params.tcpaAccepted === true) {
+    recordAuditLedger({
+      leadId,
+      actionType: 'TCPA_OPT_IN',
+      propertyId,
+      ipAddress,
+      redactedPayload: {
+        authorName: sanitizePiiInput(authorName),
+        noteId: `note-tcpa-${leadId}`,
+        tcpaAccepted: true
+      }
+    });
+  }
 
   const noteMsg: PropertyNoteMessage = {
     id: `note-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,

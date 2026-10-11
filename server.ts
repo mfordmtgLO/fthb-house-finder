@@ -450,6 +450,15 @@ app.post('/api/internal/test/mock-dashboard', async (req: Request, res: Response
   if (reset === true) {
     setMockDashboardConfig(null);
     resetDailyCapsForTest();
+    if (leadId) {
+      await getOrCreateBuyerSession(leadId, 'internal-test');
+    }
+    if (typeof setDailyChatCap === 'number' && leadId) {
+      setDailyChatCountForTest(leadId, setDailyChatCap);
+    }
+    if (typeof setDailyNoteCap === 'number' && leadId) {
+      setDailyNoteCountForTest(leadId, setDailyNoteCap);
+    }
     const updated = await sendHeartbeat(false);
     res.json({ success: true, message: 'Mock reset to live', state: updated });
     return;
@@ -457,10 +466,15 @@ app.post('/api/internal/test/mock-dashboard', async (req: Request, res: Response
   if (resetDailyCaps) {
     resetDailyCapsForTest();
   }
+  if (leadId) {
+    await getOrCreateBuyerSession(leadId, 'internal-test');
+  }
   if (typeof setDailyChatCap === 'number' && leadId) {
+    await getOrCreateBuyerSession(leadId, 'internal-test');
     setDailyChatCountForTest(leadId, setDailyChatCap);
   }
   if (typeof setDailyNoteCap === 'number' && leadId) {
+    await getOrCreateBuyerSession(leadId, 'internal-test');
     setDailyNoteCountForTest(leadId, setDailyNoteCap);
   }
   setMockDashboardConfig({
@@ -941,7 +955,8 @@ app.post('/api/notes', requirePluginOperational, requireBuyerSession(getBuyerSes
     authorName: typeof authorName === 'string' ? authorName.substring(0, 100) : authorName,
     text: typeof text === 'string' ? text.substring(0, 500) : text,
     ipAddress: ip,
-    inAppReplyNotify: notifyPref
+    inAppReplyNotify: notifyPref,
+    tcpaAccepted: tcpaAccepted !== undefined ? Boolean(tcpaAccepted) : undefined
   });
 
   res.json({ success: true, note, aiReply });
